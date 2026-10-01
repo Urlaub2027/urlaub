@@ -3,6 +3,11 @@
 -- Einmal komplett im Supabase SQL-Editor ausführen. Erneutes Ausführen ist
 -- unschädlich: vorhandene Mitarbeiter, Abgaben und Einstellungen bleiben.
 --
+-- ACHTUNG bei späteren Änderungen: Ändern sich die Parameter einer Funktion,
+-- legt "create or replace" eine ZWEITE Funktion an; die alte bleibt mitsamt
+-- ihren Rechten aufrufbar. Dann vorher die alte Fassung ausdrücklich löschen:
+--   drop function if exists public.<name>(<alte Parametertypen>);
+--
 -- Sicherheitsprinzip: Alle Tabellen und Ansichten liegen im Schema "urlaub".
 -- Darauf hat der Browser-Schlüssel (Rolle anon) keinerlei Zugriff. Der Browser
 -- darf nur die zwei Funktionen public.urlaub_laden und public.urlaub_speichern
@@ -375,12 +380,21 @@ set search_path = ''
 as $$
 begin
   perform urlaub.pruefe_admin();
+  if p_frist is null or btrim(p_frist) = '' then
+    raise exception 'FRIST_LEER';
+  end if;
   if p_dezember_hinweis is null or btrim(p_dezember_hinweis) = '' then
     raise exception 'HINWEIS_LEER';
   end if;
   update urlaub.einstellungen
-     set frist            = p_frist::timestamp at time zone 'Europe/Berlin',
-         dezember_hinweis = btrim(p_dezember_hinweis);
+     set dezember_hinweis = btrim(p_dezember_hinweis),
+         -- Frist nur ändern, wenn sie wirklich geändert wurde (sonst gingen Sekunden verloren)
+         frist = case
+                   when to_char(frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI') = btrim(p_frist)
+                   then frist
+                   else btrim(p_frist)::timestamp at time zone 'Europe/Berlin'
+                 end
+   where id;
 end;
 $$;
 

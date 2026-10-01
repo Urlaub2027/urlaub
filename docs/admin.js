@@ -1,4 +1,4 @@
-import { rpc, anmelden, erneuern } from './api.js';
+import { rpc, anmelden, erneuern, abmeldenServer } from './api.js';
 import { zeitpunkt } from './logik.js';
 import { personenZeilen, wochenZeilen, excelBlaetter } from './auswertung.js';
 import { erzeugeXlsx } from './xlsx.js';
@@ -13,6 +13,7 @@ const ADMIN_FEHLER = {
   NAME_LEER: 'Bitte einen Namen eingeben.',
   NAME_DOPPELT: 'Diesen Namen gibt es schon. Bitte unterscheide ihn, z. B. „Anna K.“ und „Anna M.“.',
   HINWEIS_LEER: 'Bitte einen Hinweis für den Dezember eingeben.',
+  FRIST_LEER: 'Bitte eine Frist mit Datum und Uhrzeit eingeben.',
   KEINE_VERBINDUNG: 'Keine Verbindung. Bitte prüfe dein Internet.',
 };
 
@@ -274,6 +275,8 @@ async function zeigeVerwaltung() {
 }
 
 function abmelden(text) {
+  // Anmeldung auch bei Supabase beenden, damit das Erneuerungs-Token ungültig wird.
+  if (sitzung?.token) abmeldenServer(sitzung.token).catch(() => {});
   sitzung = null;
   daten = null;
   sitzungLoeschen();

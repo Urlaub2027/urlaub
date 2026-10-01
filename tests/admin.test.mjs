@@ -90,7 +90,16 @@ test('Einstellungen speichern: Frist wird als deutsche Zeit gelesen', async () =
   const utc = (await db.query("select to_char(frist at time zone 'UTC', 'YYYY-MM-DD HH24:MI') as t from urlaub.einstellungen")).rows[0].t;
   assert.equal(utc, '2026-12-15 17:00');
   await assert.rejects(admin('select public.admin_einstellungen_speichern($1, $2)', ['2026-12-15T18:00', '']), /HINWEIS_LEER/);
+  await assert.rejects(admin('select public.admin_einstellungen_speichern($1, $2)', ['', 'x']), /FRIST_LEER/);
+  await assert.rejects(admin('select public.admin_einstellungen_speichern($1, $2)', [null, 'x']), /FRIST_LEER/);
   await assert.rejects(admin('select public.admin_einstellungen_speichern($1, $2)', ['kein Datum', 'x']));
+});
+
+test('Nur Hinweis ändern lässt die Frist sekundengenau unverändert', async () => {
+  await db.exec("update urlaub.einstellungen set frist = '2026-11-30 23:59:59 Europe/Berlin'");
+  await admin('select public.admin_einstellungen_speichern($1, $2)', ['2026-11-30T23:59', 'Neuer Hinweis']);
+  const t = (await db.query("select to_char(frist at time zone 'Europe/Berlin', 'YYYY-MM-DD HH24:MI:SS') as t from urlaub.einstellungen")).rows[0].t;
+  assert.equal(t, '2026-11-30 23:59:59');
 });
 
 test('Mitarbeiter löschen entfernt auch die Abgabe', async () => {

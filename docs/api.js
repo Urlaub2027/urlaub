@@ -17,7 +17,7 @@ async function anfrage(pfad, body, token) {
   } catch {
     throw new Error('KEINE_VERBINDUNG');
   }
-  const inhalt = await antwort.json().catch(() => null);
+  const inhalt = antwort.status === 204 ? null : await antwort.json().catch(() => null);
   if (!antwort.ok) {
     const fehler = new Error(inhalt?.message || `HTTP_${antwort.status}`);
     fehler.status = antwort.status;
@@ -36,4 +36,8 @@ export function anmelden(email, passwort) {
 
 export function erneuern(refreshToken) {
   return anfrage('/auth/v1/token?grant_type=refresh_token', { refresh_token: refreshToken });
+}
+
+export function abmeldenServer(token) {
+  return anfrage('/auth/v1/logout', {}, token);
 }
