@@ -48,7 +48,7 @@ test('Admin sieht Einstellungen, Mitarbeiter und Kalender', async () => {
   await admin('select public.admin_mitarbeiter_anlegen($1)', ['Anna']);
   const r = await uebersicht();
   assert.deepEqual(r.mitarbeiter.map((m) => m.name), ['Anna', 'Zoe']);
-  assert.match(r.mitarbeiter[0].link, /^https:\/\/dangtu1190-tech\.github\.io\/Urlaub\/#[0-9a-f]{32}$/);
+  assert.match(r.mitarbeiter[0].link, /^https:\/\/urlaub2027\.github\.io\/urlaub\/#[0-9a-f]{32}$/);
   assert.deepEqual(r.mitarbeiter[0].wochen, []);
   assert.equal(r.mitarbeiter[0].urlaubstage, 0);
   assert.equal(r.kalender.length, 47);

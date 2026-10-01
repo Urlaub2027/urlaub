@@ -6,9 +6,9 @@ heißen als hier beschrieben, wenn die Anbieter ihre Seiten umgestalten.
 
 **Die Adressen:**
 
-- Seite für die Mitarbeiter: `https://dangtu1190-tech.github.io/Urlaub/#<code>`
+- Seite für die Mitarbeiter: `https://urlaub2027.github.io/urlaub/#<code>`
   (jeder hat seinen eigenen Code – nie den nackten Link ohne Code verschicken)
-- Verwaltung: `https://dangtu1190-tech.github.io/Urlaub/admin.html`
+- Verwaltung: `https://urlaub2027.github.io/urlaub/admin.html`
 
 ---
 
@@ -56,12 +56,12 @@ heißen als hier beschrieben, wenn die Anbieter ihre Seiten umgestalten.
 ## Teil B – Webseite veröffentlichen (GitHub Pages)
 
 1. Die zwei Werte aus A7 kommen in die Datei `docs/config.js`.
-2. Der Code wird in das Repository `dangtu1190-tech/Urlaub` hochgeladen.
+2. Der Code wird in das Repository `Urlaub2027/urlaub` hochgeladen.
 3. Auf GitHub im Repository: **Settings** → **Pages** →
    „Build and deployment“ → Source: **Deploy from a branch** →
    Branch: **main**, Ordner: **/docs** → **Save**.
 4. 1–2 Minuten warten. Oben auf derselben Seite erscheint
-   „Your site is live at https://dangtu1190-tech.github.io/Urlaub/“.
+   „Your site is live at https://urlaub2027.github.io/urlaub/“.
 
 ## Teil C – Im Alltag
 

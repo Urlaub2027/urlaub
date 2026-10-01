@@ -197,5 +197,5 @@ test('Auswertungs-Ansichten für das Dashboard', async () => {
 
   const links = (await db.query('select * from urlaub.links')).rows;
   assert.equal(links.length, 3);
-  assert.equal(links[0].link, `https://dangtu1190-tech.github.io/Urlaub/#${annaCode}`);
+  assert.equal(links[0].link, `https://urlaub2027.github.io/urlaub/#${annaCode}`);
 });
