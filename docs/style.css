@@ -132,3 +132,89 @@ button.zweitrangig {
   border: 1px solid var(--akzent);
   margin-bottom: 24px;
 }
+
+/* ---------------------------------------------------------------- Admin */
+
+body.admin .kopf, body.admin main { max-width: 60rem; }
+.kopf-admin { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+
+.formular-box { display: grid; gap: 14px; max-width: 28rem; }
+.feld { display: grid; gap: 6px; font-weight: 600; }
+.feld input, .feld textarea {
+  font: inherit;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--hintergrund);
+  border: 1px solid var(--rand);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 44px;
+  width: 100%;
+}
+.feld input:focus, .feld textarea:focus { outline: 2px solid var(--akzent); outline-offset: 1px; }
+
+.kennzahlen { display: grid; gap: 10px; }
+.kennzahl { margin: 0; font-size: 1.2rem; font-weight: 700; }
+.kennzahlen .klein { margin: 0; }
+.kennzahlen button { max-width: 20rem; }
+
+.reiter {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--rand);
+  margin: 8px 0 16px;
+  overflow-x: auto;
+}
+.reiter button {
+  width: auto;
+  min-height: 44px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--leise);
+  border-radius: 8px 8px 0 0;
+  border-bottom: 3px solid transparent;
+}
+.reiter button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--akzent); }
+
+.neu-form { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+.neu-form button { width: auto; padding: 0 18px; }
+@media (max-width: 30rem) { .neu-form { grid-template-columns: 1fr; } .neu-form button { width: 100%; } }
+
+.karten { list-style: none; padding: 0; margin: 0 0 24px; display: grid; gap: 8px; }
+.karte {
+  background: var(--flaeche);
+  border: 1px solid var(--rand);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.karte-name { margin: 0; font-weight: 700; }
+.karte-status { margin: 2px 0 10px; font-size: 0.92rem; }
+.karte-status.ok { color: var(--text); }
+.karte-status.offen { color: var(--feiertag); }
+.karte-aktionen { display: flex; flex-wrap: wrap; gap: 8px; }
+
+button.klein-knopf, .knopf-link {
+  width: auto;
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 0.92rem;
+  margin: 0;
+}
+.knopf-link {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 10px;
+  background: var(--akzent);
+  color: var(--akzent-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+button.gefahr { background: transparent; color: var(--fehler-rand); border: 1px solid var(--fehler-rand); }
+
+.tabelle-rahmen { overflow-x: auto; margin-bottom: 24px; }
+.tabelle { width: 100%; border-collapse: collapse; background: var(--flaeche); font-size: 0.92rem; }
+.tabelle th, .tabelle td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rand); vertical-align: top; }
+.tabelle th { position: sticky; top: 0; background: var(--gesperrt); }
+.tabelle td:nth-child(3) { text-align: right; font-variant-numeric: tabular-nums; }
+.tabelle tr.viel td { background: var(--fehler); }
+.tabelle td:first-child, .tabelle td:nth-child(3) { white-space: nowrap; }

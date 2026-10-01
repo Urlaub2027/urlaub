@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://*.supabase.co; img-src data:; base-uri 'none'; form-action 'none'">
+  <title>Urlaubswünsche 2027 – Verwaltung</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="admin.js"></script>
+</head>
+<body class="admin">
+  <header class="kopf kopf-admin">
+    <div>
+      <h1>Urlaubswünsche 2027</h1>
+      <p class="begruessung">Verwaltung</p>
+    </div>
+    <button id="abmelden" type="button" class="zweitrangig klein-knopf" hidden>Abmelden</button>
+  </header>
+
+  <main>
+    <section id="login" hidden>
+      <form id="login-form" class="box formular-box" novalidate>
+        <h2>Anmelden</h2>
+        <label class="feld">Benutzername
+          <input id="login-name" type="text" autocomplete="username" autocapitalize="none" required>
+        </label>
+        <label class="feld">Passwort
+          <input id="login-passwort" type="password" autocomplete="current-password" required>
+        </label>
+        <p id="login-meldung" class="meldung" role="alert" hidden></p>
+        <button type="submit" id="login-knopf">Anmelden</button>
+      </form>
+    </section>
+
+    <section id="verwaltung" hidden>
+      <div class="box kennzahlen">
+        <p id="kennzahl" class="kennzahl"></p>
+        <p id="frist-anzeige" class="klein"></p>
+        <button id="excel" type="button">Excel herunterladen</button>
+      </div>
+      <p id="meldung" class="meldung" role="alert" hidden></p>
+
+      <nav class="reiter" role="tablist">
+        <button type="button" role="tab" data-reiter="personen" aria-selected="true">Mitarbeiter</button>
+        <button type="button" role="tab" data-reiter="wochen" aria-selected="false">Wochen</button>
+        <button type="button" role="tab" data-reiter="einstellungen" aria-selected="false">Einstellungen</button>
+      </nav>
+
+      <section id="reiter-personen">
+        <form id="neu-form" class="box neu-form" novalidate>
+          <label class="feld">Neuen Mitarbeiter anlegen
+            <input id="neu-name" type="text" placeholder="Vor- und Nachname" autocomplete="off" required>
+          </label>
+          <button type="submit">Anlegen</button>
+        </form>
+        <p class="klein">Jeder Link ist persönlich. Über „WhatsApp“ öffnet sich WhatsApp mit einer fertigen Nachricht, du wählst dort nur noch den Empfänger.</p>
+        <ul id="personen" class="karten"></ul>
+      </section>
+
+      <section id="reiter-wochen" hidden>
+        <p class="klein">Anzahl der Wünsche pro Kalenderwoche. Wochen mit vielen Wünschen sind hervorgehoben.</p>
+        <div class="tabelle-rahmen">
+          <table class="tabelle">
+            <thead><tr><th>KW</th><th>Zeitraum</th><th>Anzahl</th><th>Namen</th></tr></thead>
+            <tbody id="wochen"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="reiter-einstellungen" hidden>
+        <form id="einstellungen-form" class="box formular-box" novalidate>
+          <label class="feld">Frist (deutsche Zeit)
+            <input id="frist" type="datetime-local" required>
+          </label>
+          <label class="feld">Hinweis zur Dezember-Sperre
+            <textarea id="dezember-hinweis" rows="3" required></textarea>
+          </label>
+          <button type="submit">Einstellungen speichern</button>
+        </form>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

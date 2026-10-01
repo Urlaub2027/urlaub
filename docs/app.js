@@ -1,4 +1,4 @@
-import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
+import { rpc } from './api.js';
 import {
   codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, gleicheAuswahl, zeitpunkt,
 } from './logik.js';
@@ -8,25 +8,6 @@ const $ = (id) => document.getElementById(id);
 let code = null;
 let daten = null;            // letzte Antwort der Datenbank
 let auswahl = new Set();     // aktuell angehakte KWs
-
-async function rpc(funktion, parameter) {
-  const headers = { 'Content-Type': 'application/json', apikey: SUPABASE_KEY };
-  // Alte "anon"-Schlüssel sind JWTs und werden zusätzlich als Bearer gesendet;
-  // neue "publishable"-Schlüssel (sb_publishable_…) nur als apikey.
-  if (SUPABASE_KEY.startsWith('eyJ')) headers.Authorization = `Bearer ${SUPABASE_KEY}`;
-  let antwort;
-  try {
-    antwort = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${funktion}`, {
-      method: 'POST', headers, body: JSON.stringify(parameter),
-      cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
-    });
-  } catch {
-    throw new Error('KEINE_VERBINDUNG');
-  }
-  const inhalt = await antwort.json().catch(() => null);
-  if (!antwort.ok) throw new Error(inhalt?.message || 'UNBEKANNT');
-  return inhalt;
-}
 
 function zeige(bereich) {
   for (const id of ['laden', 'fehler', 'formular', 'bestaetigung']) $(id).hidden = id !== bereich;
