@@ -250,3 +250,150 @@ group by k.kw, k.montag, k.sonntag, k.arbeitstage, k.feiertag
 order by k.kw;
 
 revoke all on all tables in schema urlaub from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Admin-Seite (admin.html)
+--
+-- Anmeldung über Supabase Auth. Angemeldete Nutzer haben die Rolle
+-- "authenticated"; zusätzlich muss ihre Nutzer-ID in urlaub.admins stehen.
+-- Jede Admin-Funktion prüft das selbst. Der Browser-Schlüssel ohne Anmeldung
+-- (anon) darf keine Admin-Funktion aufrufen.
+-- ---------------------------------------------------------------------------
+
+create table if not exists urlaub.admins (
+  user_id uuid primary key,
+  notiz   text
+);
+alter table urlaub.admins enable row level security;
+
+create or replace function urlaub.pruefe_admin()
+returns void
+language plpgsql stable
+set search_path = ''
+as $$
+begin
+  if auth.uid() is null
+     or not exists (select 1 from urlaub.admins where user_id = auth.uid()) then
+    raise exception 'KEIN_ADMIN';
+  end if;
+end;
+$$;
+
+create or replace function public.admin_uebersicht()
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform urlaub.pruefe_admin();
+  return jsonb_build_object(
+    'einstellungen', (
+      select jsonb_build_object(
+        'frist',             e.frist,
+        'frist_eingabe',     to_char(e.frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI'),
+        'offen',             now() < e.frist,
+        'dezember_hinweis',  e.dezember_hinweis,
+        'max_wochen',        e.max_wochen,
+        'urlaubstage',       e.urlaubstage)
+      from urlaub.einstellungen e),
+    'mitarbeiter', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',           m.id,
+               'name',         m.name,
+               'link',         e.link_basis || '#' || m.code,
+               'wochen',       coalesce(to_jsonb(a.wochen), '[]'::jsonb),
+               'urlaubstage',  (select coalesce(sum(k.arbeitstage), 0)::int
+                                  from urlaub.kalender k where k.kw = any (a.wochen)),
+               'geaendert_am', a.geaendert_am) order by m.name)
+      from urlaub.mitarbeiter m
+      cross join urlaub.einstellungen e
+      left join urlaub.abgaben a on a.mitarbeiter_id = m.id), '[]'::jsonb),
+    'kalender', (
+      select jsonb_agg(jsonb_build_object(
+               'kw',          k.kw,
+               'von',         to_char(k.montag,  'DD.MM.'),
+               'bis',         to_char(k.sonntag, 'DD.MM.'),
+               'monat',       k.monat,
+               'arbeitstage', k.arbeitstage,
+               'feiertag',    k.feiertag) order by k.kw)
+      from urlaub.kalender k));
+end;
+$$;
+
+create or replace function public.admin_mitarbeiter_anlegen(p_name text)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+begin
+  perform urlaub.pruefe_admin();
+  if p_name is null or btrim(p_name) = '' then
+    raise exception 'NAME_LEER';
+  end if;
+  if exists (select 1 from urlaub.mitarbeiter where lower(name) = lower(btrim(p_name))) then
+    raise exception 'NAME_DOPPELT';
+  end if;
+  insert into urlaub.mitarbeiter (name) values (btrim(p_name));
+end;
+$$;
+
+create or replace function public.admin_mitarbeiter_loeschen(p_id bigint)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+begin
+  perform urlaub.pruefe_admin();
+  delete from urlaub.mitarbeiter where id = p_id;  -- Abgabe wird mitgelöscht
+end;
+$$;
+
+-- Neuer Code: der alte Link funktioniert sofort nicht mehr, die Abgabe bleibt.
+create or replace function public.admin_link_erneuern(p_id bigint)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+begin
+  perform urlaub.pruefe_admin();
+  update urlaub.mitarbeiter
+     set code = replace(gen_random_uuid()::text, '-', '')
+   where id = p_id;
+end;
+$$;
+
+-- p_frist kommt als "YYYY-MM-DDTHH:MI" und wird als deutsche Zeit gelesen.
+create or replace function public.admin_einstellungen_speichern(p_frist text, p_dezember_hinweis text)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+begin
+  perform urlaub.pruefe_admin();
+  if p_dezember_hinweis is null or btrim(p_dezember_hinweis) = '' then
+    raise exception 'HINWEIS_LEER';
+  end if;
+  update urlaub.einstellungen
+     set frist            = p_frist::timestamp at time zone 'Europe/Berlin',
+         dezember_hinweis = btrim(p_dezember_hinweis);
+end;
+$$;
+
+revoke all on function urlaub.pruefe_admin() from public, anon, authenticated;
+revoke all on function public.admin_uebersicht()                          from public, anon, authenticated;
+revoke all on function public.admin_mitarbeiter_anlegen(text)             from public, anon, authenticated;
+revoke all on function public.admin_mitarbeiter_loeschen(bigint)          from public, anon, authenticated;
+revoke all on function public.admin_link_erneuern(bigint)                 from public, anon, authenticated;
+revoke all on function public.admin_einstellungen_speichern(text, text)   from public, anon, authenticated;
+grant execute on function public.admin_uebersicht()                        to authenticated;
+grant execute on function public.admin_mitarbeiter_anlegen(text)           to authenticated;
+grant execute on function public.admin_mitarbeiter_loeschen(bigint)        to authenticated;
+grant execute on function public.admin_link_erneuern(bigint)               to authenticated;
+grant execute on function public.admin_einstellungen_speichern(text, text) to authenticated;
+
+revoke all on all tables in schema urlaub from public, anon, authenticated;
