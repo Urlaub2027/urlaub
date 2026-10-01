@@ -1,0 +1,12 @@
+{
+  "name": "urlaub-2027",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8"
+  }
+}
