@@ -65,7 +65,7 @@ revoke all on all tables in schema urlaub from public, anon, authenticated;
 -- PLATZHALTER: Frist, Link-Adresse und Dezember-Hinweis anpassen (siehe ANLEITUNG.md).
 insert into urlaub.einstellungen (frist, link_basis, dezember_hinweis)
 values ('2026-11-30 23:59:59 Europe/Berlin',
-        'https://DEIN-GITHUB-NAME.github.io/urlaub-2027/',
+        'https://dangtu1190-tech.github.io/Urlaub/',
         'Im Dezember ist kein Urlaub möglich.')
 on conflict (id) do nothing;
 

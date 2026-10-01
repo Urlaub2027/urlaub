@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://*.supabase.co; img-src data:; base-uri 'none'; form-action 'none'">
+  <title>Urlaubswünsche 2027</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="kopf">
+    <h1>Urlaubswünsche 2027</h1>
+    <p id="begruessung" class="begruessung"></p>
+  </header>
+
+  <main>
+    <p id="laden" class="hinweis">Wird geladen …</p>
+
+    <section id="fehler" class="box box-fehler" hidden></section>
+
+    <section id="formular" hidden>
+      <p id="status" class="box"></p>
+      <p class="erklaerung">
+        Wähle die Kalenderwochen, in denen du Urlaub möchtest: mindestens 1, höchstens
+        <span id="max-wochen"></span>. Die Wochen müssen nicht zusammenhängen.
+        Es sind Wünsche, keine Genehmigungen.
+      </p>
+      <div id="monate"></div>
+      <section class="box box-gesperrt">
+        <h2>Dezember (KW 48–52)</h2>
+        <p id="dezember-hinweis"></p>
+      </section>
+      <div class="leiste">
+        <p id="zaehler" class="zaehler" aria-live="polite"></p>
+        <p id="meldung" class="meldung" role="alert" hidden></p>
+        <button id="absenden" type="button">Wünsche absenden</button>
+      </div>
+    </section>
+
+    <section id="bestaetigung" hidden>
+      <div class="box box-ok">
+        <h2 id="bestaetigung-titel"></h2>
+        <ul id="bestaetigung-liste" class="liste"></ul>
+        <p id="bestaetigung-stand" class="klein"></p>
+      </div>
+      <p id="bestaetigung-frist"></p>
+      <button id="aendern" type="button" class="zweitrangig">Auswahl ändern</button>
+    </section>
+  </main>
+</body>
+</html>
