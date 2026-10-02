@@ -32,7 +32,8 @@ heißen als hier beschrieben, wenn die Anbieter ihre Seiten umgestalten.
 5. **Admin-Konto anlegen:** **Authentication** → **Users** → „Add user“ →
    „Create new user“
    - Email: `aw@example.com` (keine echte Adresse – der Kollege tippt später nur `aw`)
-   - Password: das gewünschte Passwort
+   - Password: das gewünschte Passwort **selbst eintippen** – Achtung, der Browser füllt
+     auf supabase.com gern ein gespeichertes Passwort vor; das Feld vorher leeren
    - Haken bei **Auto Confirm User**
    - „Create user“
 6. **Konto zum Admin machen:** wieder **SQL Editor** → „New query“ → einfügen und **Run**:
@@ -100,7 +101,7 @@ Mitarbeiter ihre Wahl beliebig oft ändern, danach nur noch ansehen.
 | Ein Link wurde weitergegeben oder ist verloren gegangen | Beim Namen **Neuer Link** → neuen Link verschicken. Der alte funktioniert sofort nicht mehr, die Abgabe bleibt erhalten. |
 | Jemand will seine Abgabe ganz zurückziehen | Selbst geht das nicht (mindestens 1 Woche). Für einen kompletten Neustart: Person löschen und neu anlegen – dann neuer Link. |
 | Seite meldet „Keine Verbindung“ für alle | Supabase pausiert kostenlose Projekte nach längerer Inaktivität. Bei Supabase anmelden → Projekt öffnen → **Restore project**. Daten bleiben erhalten. |
-| Admin-Passwort vergessen | Supabase → Authentication → Users → beim Nutzer „…“ → neues Passwort setzen. |
+| Admin-Passwort vergessen | Supabase → SQL Editor → neues Fenster → `update auth.users set encrypted_password = extensions.crypt('NEUES-PASSWORT', extensions.gen_salt('bf')) where email = 'aw@example.com';` ausführen. Das Fenster danach **nicht** speichern („Discard“). |
 | Weiterer Admin gewünscht | Schritte A5 und A6 mit anderer Adresse wiederholen, z. B. `chef@example.com` (Login dann mit `chef`). |
 
 ---
