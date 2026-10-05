@@ -137,7 +137,7 @@ function regelZeile(f, art) {
   if (!datum) {
     eingabe.step = ganz ? '1' : 'any';
     eingabe.inputMode = ganz ? 'numeric' : 'decimal';
-    if (ganz) eingabe.min = art === 'max_zeichen' ? '1' : '0';
+    if (ganz) eingabe.min = ['max_zeichen', 'max_am_stueck', 'max_urlaubstage'].includes(art) ? '1' : '0';
   }
   merke(eingabe, `${schluessel}-wert`, r ? r.wert : '');
   eingabe.setAttribute('aria-label', `${REGEL_TEXT[art]}: Wert`);

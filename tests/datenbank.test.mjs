@@ -245,6 +245,37 @@ test('Prüfregeln je Typ; ausgeschaltete Regel greift nicht', async () => {
   }
 });
 
+test('Erneutes Absenden: Antworten ausgeschalteter Fragen bleiben, verborgene eingeschaltete werden verworfen', async () => {
+  const chef2 = await organisator(db, 'chef2');
+  const b = await baueUmfrage(db, chef2, { fragen: [
+    { key: 't', typ: 'text_kurz' },
+    { key: 'wahl', typ: 'einfach', optionen: ['a', 'b'] },
+    { key: 'q', typ: 'janein' },
+    { key: 'abh', typ: 'text_kurz', bedingungen: [{ quelle: 'q', operator: 'ist', werte: true }] },
+  ] });
+  const c3 = (await db.query("insert into urlaub.mitarbeiter (umfrage_id, name) values ($1, 'Cleo') returning code", [b.umfrageId])).rows[0].code;
+  const ab = (antworten) => absenden(c3, mitIds(b, antworten));
+  const gesp = async () => {
+    const r = await laden(c3);
+    return Object.fromEntries(Object.entries(r.antworten).map(([id, w]) => [schluessel(b, [id])[0], w]));
+  };
+  const schalten = (key, aktiv) => db.query('update urlaub.fragen set aktiv = $2 where id = $1', [b.ids[key], aktiv]);
+  await ab({ t: 'alt', wahl: 'b', q: true, abh: 'x' });
+  await schalten('t', false);
+  await schalten('wahl', false);
+  await ab({ q: false, abh: 'y' });
+  assert.deepEqual(await gesp(), { q: false });
+  await schalten('t', true);
+  await schalten('wahl', true);
+  assert.deepEqual(await gesp(), { t: 'alt', wahl: Number(b.optionen.wahl.b), q: false });
+  const opt = (await db.query(`select ao.option_id from urlaub.antwort_optionen ao join urlaub.mitarbeiter m
+    on m.id = ao.mitarbeiter_id where m.code = $1`, [c3])).rows.map((x) => Number(x.option_id));
+  assert.deepEqual(opt, [Number(b.optionen.wahl.b)]);
+  // Wieder eingeschaltet: die nächste Abgabe ersetzt auch diese Antworten.
+  await ab({ q: true, abh: 'z' });
+  assert.deepEqual(await gesp(), { q: true, abh: 'z' });
+});
+
 test('Unbekannte Frage-IDs und Nicht-Objekte', async () => {
   const antworten = mitIds(bau, { urlaub: [5], schicht: 'frueh' });
   antworten['999999'] = 'egal';

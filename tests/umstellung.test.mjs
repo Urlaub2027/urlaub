@@ -119,3 +119,18 @@ test('Alte Funktionen sind entfernt', async () => {
        or (n.nspname = 'urlaub' and p.proname in ('regelverstoss', 'antwort'))`)).rows;
   assert.deepEqual(alt, []);
 });
+
+test('Übernommene Regeln bestehen die Prüfungen von org_regel_setzen (unverändert neu setzen)', async () => {
+  for (const [nutzer, u] of [[AW, umfrage], [BB, umfrage2]]) {
+    const regeln = (await db.query(`select r.frage_id, r.art, r.wert from urlaub.regeln r
+      join urlaub.fragen f on f.id = r.frage_id where f.umfrage_id = $1 order by r.art`, [u])).rows;
+    assert.equal(regeln.length, 6);
+    for (const r of regeln) {
+      await als(db, 'authenticated', nutzer, 'select public.org_regel_setzen($1, $2, $3, true)',
+        [r.frage_id, r.art, JSON.stringify(r.wert)]);
+    }
+    const danach = (await db.query(`select r.art, r.wert, r.aktiv from urlaub.regeln r
+      join urlaub.fragen f on f.id = r.frage_id where f.umfrage_id = $1 order by r.art`, [u])).rows;
+    assert.deepEqual(danach, regeln.map((r) => ({ art: r.art, wert: r.wert, aktiv: true })));
+  }
+});

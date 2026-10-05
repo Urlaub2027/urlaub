@@ -13,7 +13,8 @@
 -- Sicherheitsprinzip: Alle Tabellen liegen im Schema "urlaub"; darauf haben die
 -- Rollen anon und authenticated keinen Zugriff. Der Browser ruft nur Funktionen
 -- in "public" auf:
---   urlaub_*     ohne Anmeldung, geprüft über den Code aus dem Mitarbeiter-Link
+--   urlaub_*, umfrage_absenden
+--                ohne Anmeldung, geprüft über den Code aus dem Mitarbeiter-Link
 --   einladung_*  ohne Anmeldung, geprüft über den Einladungscode
 --   org_*        angemeldet, nur eigene Umfragen
 --   haupt_*      angemeldet, nur Hauptadmin
@@ -795,7 +796,9 @@ end;
 $$;
 
 -- Prüft alle Antworten; bei Fehlern wird nichts gespeichert (detail = Fehler je Frage).
--- Sonst ersetzt die Abgabe alle bisherigen Antworten dieser Person.
+-- Sonst ersetzt die Abgabe die bisherigen Antworten dieser Person auf eingeschaltete
+-- Fragen (auch durch Bedingungen verborgene). Antworten auf ausgeschaltete Fragen
+-- bleiben erhalten und sind nach dem Wiedereinschalten wieder da.
 create or replace function public.umfrage_absenden(p_code text, p_antworten jsonb)
 returns jsonb
 language plpgsql volatile
@@ -810,6 +813,16 @@ declare
   v_wert  jsonb;
   v_typ   text;
 begin
+  -- Erst die Umfrage-Zeile teilen (Editor-Änderungen wie Typ- oder Jahreswechsel sperren
+  -- sie for update und warten so auf die Abgabe bzw. umgekehrt), dann die Person sperren.
+  -- Diese Reihenfolge entspricht dem Löschen einer Umfrage (Umfrage, dann per Kaskade
+  -- ihre Mitarbeiter) und vermeidet so eine gegenseitige Blockade.
+  select * into v_m from urlaub.mitarbeiter where code = p_code;
+  if not found then
+    raise exception 'LINK_UNGUELTIG';
+  end if;
+  perform 1 from urlaub.umfragen where id = v_m.umfrage_id for share;
+  -- Neu lesen: Link kann inzwischen erneuert oder die Person gelöscht worden sein.
   select * into v_m from urlaub.mitarbeiter where code = p_code for update;
   if not found then
     raise exception 'LINK_UNGUELTIG';
@@ -822,7 +835,9 @@ begin
   if v_r -> 'fehler' <> '{}'::jsonb then
     raise exception 'ANTWORTEN_UNGUELTIG' using detail = (v_r -> 'fehler')::text;
   end if;
-  delete from urlaub.antworten where mitarbeiter_id = v_m.id;
+  -- antwort_optionen folgen per "on delete cascade".
+  delete from urlaub.antworten an using urlaub.fragen f
+  where an.mitarbeiter_id = v_m.id and f.id = an.frage_id and f.aktiv;
   for v_id, v_wert in select key, value from jsonb_each(v_r -> 'antworten') loop
     insert into urlaub.antworten (mitarbeiter_id, frage_id, wert) values (v_m.id, v_id::bigint, v_wert);
     select typ into v_typ from urlaub.fragen where id = v_id::bigint;
@@ -1287,7 +1302,8 @@ $$;
 
 -- Gespeicherte Form eines Regelwerts, sonst UNGUELTIGE_EINSTELLUNG. Streng, weil
 -- antwort_verstoss/wochen_verstoss/kalender die Werte ohne Schutz umwandeln
--- (::int, ::numeric, ::date). Ganze Zahlen bleiben im int-Bereich.
+-- (::int, ::numeric, ::date). Ganze Zahlen bleiben im int-Bereich; max_zeichen,
+-- max_am_stueck und max_urlaubstage mindestens 1.
 create or replace function urlaub.regelwert(p_art text, p_wert jsonb)
 returns jsonb
 language plpgsql immutable
@@ -1306,7 +1322,8 @@ begin
       raise exception 'UNGUELTIGE_EINSTELLUNG';
     end if;
     v_zahl := (p_wert #>> '{}')::numeric;
-    if v_zahl <> trunc(v_zahl) or v_zahl < (case p_art when 'max_zeichen' then 1 else 0 end)
+    if v_zahl <> trunc(v_zahl)
+       or v_zahl < (case when p_art in ('max_zeichen', 'max_am_stueck', 'max_urlaubstage') then 1 else 0 end)
        or v_zahl > 2147483647 then
       raise exception 'UNGUELTIGE_EINSTELLUNG';
     end if;
@@ -1717,6 +1734,9 @@ end;
 $$;
 
 -- Legt die Regel an oder ändert Wert und Schalter. pflicht speichert immer null.
+-- Sind danach beide Regeln eines Paares (min/max, frühestens/spätestens) eingeschaltet
+-- und die untere größer als die obere, scheitert der ganze Aufruf (gilt auch fürs
+-- Einschalten). Gleiche Werte sind erlaubt.
 create or replace function public.org_regel_setzen(p_frage_id bigint, p_art text, p_wert jsonb, p_aktiv boolean)
 returns void
 language plpgsql volatile
@@ -1734,6 +1754,17 @@ begin
   insert into urlaub.regeln (frage_id, art, wert, aktiv)
   values (v_f.id, p_art, v_wert, coalesce(p_aktiv, true))
   on conflict (frage_id, art) do update set wert = excluded.wert, aktiv = coalesce(p_aktiv, urlaub.regeln.aktiv);
+  if exists (
+    select 1
+    from (values ('min_wochen', 'max_wochen'), ('min_anzahl', 'max_anzahl'), ('min_zahl', 'max_zahl'),
+                 ('fruehestens', 'spaetestens')) as p (unten, oben)
+    join urlaub.regeln ru on ru.frage_id = v_f.id and ru.art = p.unten and ru.aktiv
+    join urlaub.regeln ro on ro.frage_id = v_f.id and ro.art = p.oben and ro.aktiv
+    where p_art in (p.unten, p.oben)
+      and case when p.unten = 'fruehestens' then (ru.wert #>> '{}')::date > (ro.wert #>> '{}')::date
+               else (ru.wert #>> '{}')::numeric > (ro.wert #>> '{}')::numeric end) then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
 end;
 $$;
 

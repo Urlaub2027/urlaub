@@ -222,6 +222,54 @@ test('Regeln setzen: passend und mit gültigen Werten', async () => {
   assert.deepEqual(g.regeln.max_zeichen, { wert: 50, aktiv: false });
 });
 
+test('Regeln: widersprüchliche Paare werden abgelehnt, nichts geändert', async () => {
+  const u = await neueUmfrage();
+  const uw = (await fragenVon(u))[0].id; // Standard: min_wochen 1, max_wochen 6
+  const m = await frage(u, 'mehrfach');
+  const z = await frage(u, 'zahl');
+  const d = await frage(u, 'datum');
+  // [Frage, untere Regel, obere Regel, klein, groß, über groß, unter klein]
+  const paare = [
+    [uw, 'min_wochen', 'max_wochen', 2, 4, 5, 1],
+    [m, 'min_anzahl', 'max_anzahl', 1, 2, 3, 0],
+    [z, 'min_zahl', 'max_zahl', -1.5, 2.5, 2.75, -1.75],
+    [d, 'fruehestens', 'spaetestens', '2027-03-01', '2027-06-30', '2027-07-01', '2027-02-28'],
+  ];
+  const stand = async (f, art) => (await findeFrage(u, f)).regeln[art];
+  // Die Standard-Regeln der Urlaubswochen-Frage bestehen die Prüfung unverändert.
+  for (const [art, r] of Object.entries((await findeFrage(u, uw)).regeln)) await regel(uw, art, r.wert, r.aktiv);
+  for (const [f, min, max, klein, gross, ueber, unter] of paare) {
+    await regel(f, min, klein);
+    await regel(f, max, gross);
+    // Beide Richtungen: min über max, max unter min.
+    await assert.rejects(regel(f, min, ueber), /UNGUELTIGE_EINSTELLUNG/, min);
+    await assert.rejects(regel(f, max, unter), /UNGUELTIGE_EINSTELLUNG/, max);
+    assert.deepEqual(await stand(f, min), { wert: klein, aktiv: true }, min);
+    assert.deepEqual(await stand(f, max), { wert: gross, aktiv: true }, max);
+    // Gleiche Werte sind erlaubt.
+    await regel(f, min, gross);
+    await regel(f, min, klein);
+    await regel(f, max, klein);
+    await regel(f, max, gross);
+    // Gegenstück ausgeschaltet: Widerspruch erlaubt; Wiedereinschalten wird abgelehnt.
+    await regel(f, max, klein, false);
+    await regel(f, min, gross);
+    await assert.rejects(regel(f, max, klein, true), /UNGUELTIGE_EINSTELLUNG/, `${max} einschalten`);
+    assert.deepEqual(await stand(f, max), { wert: klein, aktiv: false }, max);
+    // Andersherum: min ausgeschaltet, max kleiner, min einschalten scheitert.
+    await regel(f, min, gross, false);
+    await regel(f, max, klein, true);
+    await assert.rejects(regel(f, min, gross, true), /UNGUELTIGE_EINSTELLUNG/, `${min} einschalten`);
+    // Ausschalten einer widersprüchlichen Regel geht immer.
+    await regel(f, min, gross, false);
+  }
+  for (const art of ['max_am_stueck', 'max_urlaubstage']) {
+    await assert.rejects(regel(uw, art, 0), /UNGUELTIGE_EINSTELLUNG/, art);
+    await assert.rejects(regel(uw, art, 0, false), /UNGUELTIGE_EINSTELLUNG/, `${art} aus`);
+    await regel(uw, art, 1);
+  }
+});
+
 test('Bedingungen: gültig, ungültig, ändern, schalten, löschen', async () => {
   const u = await neueUmfrage();
   const e = await frage(u, 'einfach');
