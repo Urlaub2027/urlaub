@@ -1,118 +1,111 @@
-# Urlaubswünsche 2027 – Anleitung
+# Urlaubswünsche – Anleitung
 
-Diese Anleitung ist für die Person, die die App einrichtet und betreut. Es braucht
-keine Programmierkenntnisse. Die Menüs bei Supabase und GitHub können leicht anders
-heißen als hier beschrieben, wenn die Anbieter ihre Seiten umgestalten.
+Für alle, die die App betreuen oder Umfragen organisieren. Es braucht keine
+Programmierkenntnisse. Menüs bei Supabase und GitHub können leicht anders heißen.
 
-**Die Adressen:**
+**Adressen**
 
-- Seite für die Mitarbeiter: `https://urlaub2027.github.io/urlaub/#<code>`
-  (jeder hat seinen eigenen Code – nie den nackten Link ohne Code verschicken)
 - Verwaltung: `https://urlaub2027.github.io/urlaub/admin.html`
+- Mitarbeiter-Links: `https://urlaub2027.github.io/urlaub/#<code>` – werden in der
+  Verwaltung erzeugt, jeder Link ist persönlich.
+
+**Rollen**
+
+- **Organisator:** legt eigene Umfragen an, sieht nur seine eigenen, kann andere einladen.
+- **Hauptadmin:** zusätzlich Übersicht aller Organisatoren, kann sperren. Sieht fremde
+  Umfragen nicht.
 
 ---
 
-## Teil A – Supabase einrichten (einmalig, ca. 15 Minuten)
+## Teil A – Umstellung der bestehenden Installation (einmalig)
 
-1. **Konto anlegen:** <https://supabase.com> öffnen → „Start your project“ →
-   mit GitHub anmelden oder mit E-Mail registrieren.
-2. **Projekt anlegen:** „New project“
-   - Name: `urlaub-2027`
-   - Database Password: auf „Generate a password“ klicken und das Passwort in
-     deinem Passwort-Manager speichern. Du brauchst es im Alltag nicht.
-   - Region: **Central EU (Frankfurt)**
-   - Plan: Free
-   - „Create new project“ → etwa 2 Minuten warten.
-3. **Datenbank anlegen:** Links im Menü **SQL Editor** → „New query“ → den kompletten
-   Inhalt der Datei `supabase/schema.sql` hineinkopieren → **Run**.
-   Erwartet: „Success. No rows returned“.
-4. **Registrierung abschalten:** Links **Authentication** → **Sign In / Providers**
-   (bzw. „Configuration“) → **Allow new users to sign up** ausschalten → Speichern.
-   Damit kann sich niemand selbst ein Konto anlegen.
-5. **Admin-Konto anlegen:** **Authentication** → **Users** → „Add user“ →
-   „Create new user“
-   - Email: `aw@example.com` (keine echte Adresse – der Kollege tippt später nur `aw`)
-   - Password: das gewünschte Passwort **selbst eintippen** – Achtung, der Browser füllt
-     auf supabase.com gern ein gespeichertes Passwort vor; das Feld vorher leeren
-   - Haken bei **Auto Confirm User**
-   - „Create user“
-6. **Konto zum Admin machen:** wieder **SQL Editor** → „New query“ → einfügen und **Run**:
+1. Supabase → **SQL Editor** → „New query" → kompletten Inhalt von `supabase/schema.sql`
+   einfügen → **Run**. Erwartet: „Success. No rows returned".
+   Die bisherige Umfrage wird dabei zu „Urlaubswünsche 2027"; alle Mitarbeiter-Links
+   bleiben gültig; das Konto `aw` wird Hauptadmin.
+
+   Falls der SQL Editor eine Meldung mit „UMSTELLUNG abgebrochen" zeigt, wurde nichts verändert. Die Meldung nennt den Grund (z. B. zwei Mitarbeiter, deren Namen sich nur in Groß-/Kleinschreibung unterscheiden). Den Grund beheben und die Datei erneut ausführen.
+
+2. Supabase → **Authentication** → **Sign In / Providers**:
+   - **Allow new users to sign up: an** (nötig für Einladungen – die Datenbank lehnt
+     jede Registrierung ohne gültige Einladung ab)
+   - **Confirm email: aus** (es werden keine E-Mails verschickt)
+   - **Allow anonymous sign-ins: aus**
+   - **Save changes**
+3. Neue Konten entstehen **nur noch über Einladungslinks**. „Add user" im Supabase-
+   Dashboard funktioniert dafür nicht mehr.
+
+**Hinweis:** Die Regel „höchstens 3 Wochen am Stück" gilt ab der Umstellung auch für die bestehende Umfrage. Bereits gespeicherte Abgaben bleiben erhalten; verstößt eine dagegen, wird sie in der Verwaltung markiert.
+
+## Teil B – Neuinstallation (nur für eine komplett neue Kopie)
+
+1. Supabase-Projekt anlegen (Region Frankfurt), `supabase/schema.sql` im SQL Editor ausführen.
+2. Authentication wie in Teil A Schritt 2 einstellen.
+3. In `docs/config.js` Project URL und Publishable key eintragen; die Seite auf GitHub
+   Pages veröffentlichen (Settings → Pages → Branch `main`, Ordner `/docs`).
+4. Adresse der Seite eintragen und den ersten Zugang erzeugen – im SQL Editor:
 
    ```sql
-   insert into urlaub.admins (user_id, notiz)
-   select id, 'aw' from auth.users where email = 'aw@example.com';
+   update urlaub.app set link_basis = 'https://<deine-adresse>/';
+   select urlaub.start_einladung();
    ```
 
-   Erwartet: „Success. 1 row affected“ (bzw. „1 row“). Steht dort 0, stimmt die
-   E-Mail-Adresse aus Schritt 5 nicht.
-7. **Zugangsdaten für die Webseite kopieren:** **Project Settings** (Zahnrad) →
-   **API Keys** bzw. **Data API**:
-   - **Project URL** (sieht aus wie `https://abcdefgh.supabase.co`)
-   - **Publishable key** (beginnt mit `sb_publishable_`) – falls es den nicht gibt,
-     den **anon public** Key.
-
-   Diese beiden Werte sind öffentlich und dürfen weitergegeben werden.
-   **Niemals** den „secret“- oder „service_role“-Key weitergeben oder einbauen.
-
-## Teil B – Webseite veröffentlichen (GitHub Pages)
-
-1. Die zwei Werte aus A7 kommen in die Datei `docs/config.js`.
-2. Der Code wird in das Repository `Urlaub2027/urlaub` hochgeladen.
-3. Auf GitHub im Repository: **Settings** → **Pages** →
-   „Build and deployment“ → Source: **Deploy from a branch** →
-   Branch: **main**, Ordner: **/docs** → **Save**.
-4. 1–2 Minuten warten. Oben auf derselben Seite erscheint
-   „Your site is live at https://urlaub2027.github.io/urlaub/“.
+   Den angezeigten Link öffnen und registrieren – dieses Konto wird Hauptadmin.
 
 ## Teil C – Im Alltag
 
+### Umfrage anlegen
+
+Verwaltung → **Meine Umfragen** → Titel, Jahr, Bundesland → **Umfrage anlegen**.
+Dann im Reiter **Einstellungen** prüfen: Frist, Urlaubstage, Wochen (mindestens,
+höchstens, höchstens am Stück), gesperrte Monate mit Hinweis, Arbeitstage pro Woche.
+Örtliche Feiertage (z. B. Augsburger Friedensfest) unter **Zusätzliche freie Tage**.
+
+Jahr, Bundesland und Arbeitstage pro Woche lassen sich nur ändern, solange noch
+niemand abgegeben hat.
+
 ### Mitarbeiter anlegen und Links verschicken
 
-1. `…/admin.html` öffnen → Benutzername `aw` + Passwort.
-2. Reiter **Mitarbeiter** → Namen eintragen → **Anlegen**.
-   Gibt es zwei Personen mit gleichem Vornamen, unterscheiden: „Anna K.“, „Anna M.“.
-3. Beim Namen auf **WhatsApp** tippen → WhatsApp öffnet sich mit fertiger Nachricht
-   → Empfänger wählen → senden. Alternativ **Link kopieren** und selbst einfügen.
+Reiter **Mitarbeiter** → Namen eintragen → **Anlegen** → beim Namen **WhatsApp**
+(öffnet WhatsApp mit fertiger Nachricht) oder **Link kopieren**.
 
-### Frist und Dezember-Hinweis
+### Weitere Organisatoren einladen
 
-Reiter **Einstellungen**. Die Frist gilt in deutscher Zeit. Bis zur Frist können
-Mitarbeiter ihre Wahl beliebig oft ändern, danach nur noch ansehen.
-
-**Vor dem ersten Verschicken unbedingt prüfen:** Die Frist ist zunächst auf
-30.11.2026, 23:59 Uhr gesetzt und der Dezember-Hinweis lautet nur
-„Im Dezember ist kein Urlaub möglich.“
+**Konto & Einladen** → **Einladungslink erzeugen** → per WhatsApp schicken. Der Link
+ist 7 Tage gültig und nur einmal verwendbar. Die Person wählt Namen, Benutzername
+und Passwort selbst.
 
 ### Auswertung
 
-- Oben steht, wie viele schon abgegeben haben.
-- Reiter **Mitarbeiter**: pro Person die gewählten Wochen, Urlaubstage und letzte Änderung.
-- Reiter **Wochen**: pro KW Anzahl und Namen; Wochen mit vielen Wünschen sind rot hinterlegt.
-- **Excel herunterladen**: eine Datei mit drei Blättern:
-  - *Personen* – eine Zeile pro Person
-  - *Wochen* – eine Zeile pro KW mit Anzahl und Namen
-  - *Matrix* – Namen × KW mit „x“, unten die Summe pro Woche.
-    Hier sieht man auf einen Blick, wo sich Wünsche ballen.
+- Oben: wie viele schon abgegeben haben.
+- Reiter **Mitarbeiter**: gewählte Wochen, Urlaubstage, letzte Änderung. Eine Warnung
+  erscheint, wenn eine Abgabe gegen später verschärfte Regeln verstößt.
+- Reiter **Wochen**: Anzahl und Namen pro KW; volle Wochen sind rot hinterlegt.
+- **Excel herunterladen**: Blätter *Personen*, *Wochen* und *Matrix* (Namen × KW).
 
 ### Probleme
 
 | Was passiert | Was tun |
 |---|---|
-| Ein Link wurde weitergegeben oder ist verloren gegangen | Beim Namen **Neuer Link** → neuen Link verschicken. Der alte funktioniert sofort nicht mehr, die Abgabe bleibt erhalten. |
-| Jemand will seine Abgabe ganz zurückziehen | Selbst geht das nicht (mindestens 1 Woche). Für einen kompletten Neustart: Person löschen und neu anlegen – dann neuer Link. |
-| Seite meldet „Keine Verbindung“ für alle | Supabase pausiert kostenlose Projekte nach längerer Inaktivität. Bei Supabase anmelden → Projekt öffnen → **Restore project**. Daten bleiben erhalten. |
-| Admin-Passwort vergessen | Supabase → SQL Editor → neues Fenster → `update auth.users set encrypted_password = extensions.crypt('NEUES-PASSWORT', extensions.gen_salt('bf')) where email = 'aw@example.com';` ausführen. Das Fenster danach **nicht** speichern („Discard“). |
-| Weiterer Admin gewünscht | Schritte A5 und A6 mit anderer Adresse wiederholen, z. B. `chef@example.com` (Login dann mit `chef`). |
+| Ein Mitarbeiter-Link wurde weitergegeben oder ist verloren | Beim Namen **Neuer Link** → neu verschicken. Abgabe bleibt erhalten. |
+| Jemand will seine Abgabe ganz zurückziehen | Person löschen und neu anlegen (neuer Link). |
+| Seite meldet „Keine Verbindung" für alle | Supabase pausiert kostenlose Projekte nach ca. 1 Woche ohne Aufrufe. Bei Supabase anmelden → Projekt → **Restore project**. Daten bleiben erhalten. |
+| Eigenes Passwort ändern | Verwaltung → **Konto & Einladen** → Passwort ändern. |
+| Organisator hat Passwort vergessen | Hauptadmin im Supabase SQL Editor: `update auth.users set encrypted_password = extensions.crypt('NEUES-PASSWORT', extensions.gen_salt('bf')) where email = '<benutzername>@example.com';` – Fenster danach **nicht** speichern („Discard"). |
+| Einladung abgelaufen | Neuen Einladungslink erzeugen. |
+| Organisator soll keinen Zugang mehr haben | Hauptadmin → **Organisatoren** → **Sperren**. |
+| Neue Organisator-Registrierung schlägt fehl, obwohl die Einladung gerade erzeugt wurde | Benutzername schon vergeben oder Einladung inzwischen benutzt – neuen Einladungslink erzeugen und einen anderen Benutzernamen wählen. |
 
 ---
 
 ## Datenschutz und Sicherheit in Kürze
 
-- Gespeichert werden nur: Name, Zufallscode, gewählte Wochen, Zeitpunkt der letzten Änderung.
+- Gespeichert werden: Name und Zufallscode der Mitarbeiter, gewählte Wochen, Zeitpunkt
+  der letzten Änderung; für Organisatoren Anzeigename und Benutzername.
 - Keine Cookies, kein Tracking, keine fremden Schriften oder Skripte.
-- Der Code steht hinter dem `#` im Link und wird dadurch nicht an GitHub übertragen.
-- Mitarbeiter sehen nur ihren eigenen Eintrag. Die Datenbank prüft jeden Zugriff
-  selbst (Code, KW 1–47, höchstens 6 Wochen bzw. 36 Urlaubstage, Frist).
-- Wie bei jedem Webdienst protokollieren GitHub und Supabase technisch IP-Adressen
-  der Aufrufe in ihren Server-Logs; darauf hat die App keinen Einfluss.
-- Das Repository ist öffentlich. Es enthält keine Namen, keine Codes und keine geheimen Schlüssel.
+- Mitarbeiter sehen nur ihren eigenen Eintrag; Organisatoren nur ihre eigenen Umfragen.
+  Die Datenbank prüft das bei jedem Zugriff selbst.
+- Registrieren kann sich nur, wer einen gültigen Einladungslink hat.
+- Alle Umfragen liegen im Supabase-Projekt des Betreibers. Wer die App anderen
+  Abteilungen anbietet, sollte klären, dass das datenschutzrechtlich in Ordnung ist.
+- Wie bei jedem Webdienst protokollieren GitHub und Supabase technisch IP-Adressen.
