@@ -1,8 +1,9 @@
-// Verbindung zu Supabase (REST). Fehler werden als Error mit dem Fehlercode der
-// Datenbank (z. B. "LINK_UNGUELTIG") oder "KEINE_VERBINDUNG" geworfen.
+// Verbindung zu Supabase (REST und Auth). Fehler werden als Error geworfen:
+// message = Fehlercode der Datenbank (z. B. "LINK_UNGUELTIG"), Auth-Fehlercode
+// (z. B. "user_already_exists") oder "KEINE_VERBINDUNG"; status = HTTP-Status.
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 
-async function anfrage(pfad, body, token) {
+async function anfrage(pfad, body, token, methode = 'POST') {
   const headers = { 'Content-Type': 'application/json', apikey: SUPABASE_KEY };
   // Angemeldet: Sitzungs-Token. Sonst: alte "anon"-Schlüssel sind JWTs und gehen
   // zusätzlich als Bearer mit; neue "publishable"-Schlüssel nur als apikey.
@@ -11,7 +12,7 @@ async function anfrage(pfad, body, token) {
   let antwort;
   try {
     antwort = await fetch(`${SUPABASE_URL}${pfad}`, {
-      method: 'POST', headers, body: JSON.stringify(body),
+      method: methode, headers, body: JSON.stringify(body),
       cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
     });
   } catch {
@@ -19,7 +20,7 @@ async function anfrage(pfad, body, token) {
   }
   const inhalt = antwort.status === 204 ? null : await antwort.json().catch(() => null);
   if (!antwort.ok) {
-    const fehler = new Error(inhalt?.message || `HTTP_${antwort.status}`);
+    const fehler = new Error(inhalt?.message || inhalt?.error_code || inhalt?.msg || `HTTP_${antwort.status}`);
     fehler.status = antwort.status;
     throw fehler;
   }
@@ -40,4 +41,13 @@ export function erneuern(refreshToken) {
 
 export function abmeldenServer(token) {
   return anfrage('/auth/v1/logout', {}, token);
+}
+
+// daten landet in raw_user_meta_data und wird vom Datenbank-Trigger geprüft.
+export function registrieren(email, passwort, daten) {
+  return anfrage('/auth/v1/signup', { email, password: passwort, data: daten });
+}
+
+export function passwortAendern(token, passwort) {
+  return anfrage('/auth/v1/user', { password: passwort }, token, 'PUT');
 }

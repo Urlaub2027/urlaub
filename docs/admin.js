@@ -1,324 +1,299 @@
-import { rpc, anmelden, erneuern, abmeldenServer } from './api.js';
+// Verwaltung: Anmeldung, Registrierung über Einladung, Umfrageliste, Konto, Organisatoren.
+import {
+  $, meldung, fehlerText, knopf, element, whatsappLink, kopieren, fuelleJahre, fuelleLaender, landName,
+} from './admin-hilfe.js';
+import * as sitzung from './sitzung.js';
+import { rpc, registrieren, passwortAendern } from './api.js';
 import { zeitpunkt } from './logik.js';
-import { personenZeilen, wochenZeilen, excelBlaetter } from './auswertung.js';
-import { erzeugeXlsx } from './xlsx.js';
+import { initUmfrage, zeigeUmfrage } from './admin-umfrage.js';
 
-// Supabase verlangt eine E-Mail-Adresse. Der Kollege tippt nur den Benutzernamen;
-// die Domain ist reserviert (RFC 2606) und kann keine Post empfangen.
-const LOGIN_DOMAIN = 'example.com';
-const SITZUNG = 'urlaub-admin-sitzung';
+const ANSICHTEN = ['login', 'registrieren', 'liste', 'umfrage', 'konto', 'organisatoren'];
+const BENUTZERNAME = /^[a-z0-9][a-z0-9.-]{1,29}$/;
+let ich = null;
+let einladungsCode = null;
 
-const ADMIN_FEHLER = {
-  KEIN_ADMIN: 'Dieses Konto hat keine Admin-Rechte.',
-  NAME_LEER: 'Bitte einen Namen eingeben.',
-  NAME_DOPPELT: 'Diesen Namen gibt es schon. Bitte unterscheide ihn, z. B. „Anna K.“ und „Anna M.“.',
-  HINWEIS_LEER: 'Bitte einen Hinweis für den Dezember eingeben.',
-  FRIST_LEER: 'Bitte eine Frist mit Datum und Uhrzeit eingeben.',
-  KEINE_VERBINDUNG: 'Keine Verbindung. Bitte prüfe dein Internet.',
-};
-
-const $ = (id) => document.getElementById(id);
-let daten = null;
-
-// ---------------------------------------------------------------- Sitzung
-
-function sitzungLesen() {
-  try { return JSON.parse(sessionStorage.getItem(SITZUNG)); } catch { return null; }
+function zeigeAnsicht(name) {
+  for (const a of ANSICHTEN) $(`ansicht-${a}`).hidden = a !== name;
+  $('navigation').hidden = !ich;
+  window.scrollTo(0, 0);
 }
 
-function sitzungSpeichern(antwort) {
-  const sitzung = {
-    token: antwort.access_token,
-    refresh: antwort.refresh_token,
-    ablauf: Date.now() + (antwort.expires_in || 3600) * 1000,
-  };
-  try { sessionStorage.setItem(SITZUNG, JSON.stringify(sitzung)); } catch { /* nur für diese Seite */ }
-  return sitzung;
-}
-
-function sitzungLoeschen() {
-  try { sessionStorage.removeItem(SITZUNG); } catch { /* egal */ }
-}
-
-let sitzung = null;
-
-async function gueltigesToken() {
-  if (!sitzung) throw new Error('NICHT_ANGEMELDET');
-  if (Date.now() > sitzung.ablauf - 60_000) {
-    try {
-      sitzung = sitzungSpeichern(await erneuern(sitzung.refresh));
-    } catch {
-      throw new Error('NICHT_ANGEMELDET');
-    }
-  }
-  return sitzung.token;
-}
-
-async function adminRpc(funktion, parameter) {
+// Ruft eine org_/haupt_-Funktion auf. Abgelaufene Anmeldung oder fehlende Rechte → Login.
+async function aufruf(funktion, parameter) {
   try {
-    return await rpc(funktion, parameter, await gueltigesToken());
+    return await sitzung.orgRpc(funktion, parameter);
   } catch (fehler) {
-    if (fehler.message === 'NICHT_ANGEMELDET' || fehler.status === 401 || fehler.message === 'KEIN_ADMIN') {
-      abmelden(fehler.message === 'KEIN_ADMIN'
-        ? ADMIN_FEHLER.KEIN_ADMIN
+    if (fehler.message === 'NICHT_ANGEMELDET' || fehler.status === 401 || fehler.message === 'KEIN_ZUGRIFF') {
+      abmelden(fehler.message === 'KEIN_ZUGRIFF'
+        ? fehlerText('KEIN_ZUGRIFF')
         : 'Deine Anmeldung ist abgelaufen. Bitte melde dich neu an.');
+      fehler.behandelt = true;
     }
     throw fehler;
   }
 }
 
-// ---------------------------------------------------------------- Anzeige
-
-function meldung(text, element = $('meldung')) {
-  element.textContent = text || '';
-  element.hidden = !text;
-}
-
 function fehlerAnzeigen(fehler) {
-  if (fehler.message === 'NICHT_ANGEMELDET' || fehler.message === 'KEIN_ADMIN' || fehler.status === 401) return;
-  meldung(ADMIN_FEHLER[fehler.message] || 'Das hat nicht geklappt. Bitte versuch es noch einmal.');
-}
-
-function knopf(text, klasse, aktion) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.textContent = text;
-  b.className = klasse;
-  b.addEventListener('click', aktion);
-  return b;
-}
-
-function whatsappLink(p) {
-  const text = `Hallo ${p.name}, hier ist dein persönlicher Link für deine Urlaubswünsche 2027. `
-    + `Bitte nicht weitergeben – über diesen Link kann man deine Wünsche ändern:\n${p.link}`;
-  return `https://wa.me/?text=${encodeURIComponent(text)}`;
-}
-
-function zeichnePersonen() {
-  const liste = $('personen');
-  liste.replaceChildren();
-  const personen = personenZeilen(daten);
-  if (!personen.length) {
-    const leer = document.createElement('li');
-    leer.className = 'klein';
-    leer.textContent = 'Noch keine Mitarbeiter angelegt.';
-    liste.append(leer);
-  }
-  for (const p of personen) {
-    const karte = document.createElement('li');
-    karte.className = 'karte';
-    const name = document.createElement('p');
-    name.className = 'karte-name';
-    name.textContent = p.name;
-    const status = document.createElement('p');
-    status.className = p.abgegeben ? 'karte-status ok' : 'karte-status offen';
-    status.textContent = p.abgegeben
-      ? `${p.wochen} · ${p.urlaubstage} Urlaubstage · Stand ${p.stand}`
-      : 'Noch nicht abgegeben';
-    const aktionen = document.createElement('div');
-    aktionen.className = 'karte-aktionen';
-    const whatsapp = document.createElement('a');
-    whatsapp.className = 'knopf-link';
-    whatsapp.href = whatsappLink(p);
-    whatsapp.target = '_blank';
-    whatsapp.rel = 'noopener noreferrer';
-    whatsapp.textContent = 'WhatsApp';
-    aktionen.append(
-      knopf('Link kopieren', 'zweitrangig klein-knopf', async (e) => {
-        try {
-          await navigator.clipboard.writeText(p.link);
-          e.target.textContent = 'Kopiert ✓';
-          setTimeout(() => { e.target.textContent = 'Link kopieren'; }, 2000);
-        } catch {
-          window.prompt('Link zum Kopieren:', p.link);
-        }
-      }),
-      whatsapp,
-      knopf('Neuer Link', 'zweitrangig klein-knopf', () => linkErneuern(p)),
-      knopf('Löschen', 'gefahr klein-knopf', () => loeschen(p)),
-    );
-    karte.append(name, status, aktionen);
-    liste.append(karte);
-  }
-}
-
-function zeichneWochen() {
-  const zeilen = wochenZeilen(daten);
-  const max = Math.max(1, ...zeilen.map((w) => w.anzahl));
-  $('wochen').replaceChildren(...zeilen.map((w) => {
-    const tr = document.createElement('tr');
-    if (w.anzahl > 0 && w.anzahl >= Math.max(2, max * 0.75)) tr.className = 'viel';
-    for (const wert of [`KW ${w.kw}`, w.zeitraum + (w.feiertag ? ` (${w.feiertag})` : ''), w.anzahl, w.namen]) {
-      const td = document.createElement('td');
-      td.textContent = String(wert);
-      tr.append(td);
-    }
-    return tr;
-  }));
-}
-
-function zeichne() {
-  const personen = personenZeilen(daten);
-  const abgegeben = personen.filter((p) => p.abgegeben).length;
-  $('kennzahl').textContent = `${abgegeben} von ${personen.length} haben abgegeben`;
-  const e = daten.einstellungen;
-  $('frist-anzeige').textContent = e.offen
-    ? `Abgabe möglich bis ${zeitpunkt(e.frist)}`
-    : `Frist abgelaufen am ${zeitpunkt(e.frist)} – nur noch Ansehen möglich`;
-  zeichnePersonen();
-  zeichneWochen();
-}
-
-async function laden() {
-  daten = await adminRpc('admin_uebersicht');
-  zeichne();
-}
-
-// ---------------------------------------------------------------- Aktionen
-
-async function anlegen(ereignis) {
-  ereignis.preventDefault();
-  const feld = $('neu-name');
-  meldung('');
-  try {
-    await adminRpc('admin_mitarbeiter_anlegen', { p_name: feld.value });
-    feld.value = '';
-    await laden();
-  } catch (fehler) {
-    fehlerAnzeigen(fehler);
-  }
-  feld.focus();
-}
-
-async function linkErneuern(p) {
-  if (!window.confirm(`Neuen Link für ${p.name} erzeugen?\n\nDer bisherige Link funktioniert dann nicht mehr. `
-    + 'Die bisherige Abgabe bleibt erhalten. Den neuen Link musst du erneut verschicken.')) return;
-  meldung('');
-  try {
-    await adminRpc('admin_link_erneuern', { p_id: p.id });
-    await laden();
-  } catch (fehler) {
-    fehlerAnzeigen(fehler);
-  }
-}
-
-async function loeschen(p) {
-  if (!window.confirm(`${p.name} wirklich löschen?\n\nDie Abgabe wird ebenfalls gelöscht und der Link funktioniert nicht mehr.`)) return;
-  meldung('');
-  try {
-    await adminRpc('admin_mitarbeiter_loeschen', { p_id: p.id });
-    await laden();
-  } catch (fehler) {
-    fehlerAnzeigen(fehler);
-  }
-}
-
-async function einstellungenSpeichern(ereignis) {
-  ereignis.preventDefault();
-  meldung('');
-  try {
-    await adminRpc('admin_einstellungen_speichern', {
-      p_frist: $('frist').value, p_dezember_hinweis: $('dezember-hinweis').value,
-    });
-    await laden();
-    meldung('Einstellungen gespeichert.');
-  } catch (fehler) {
-    fehlerAnzeigen(fehler);
-  }
-}
-
-function excelHerunterladen() {
-  const blob = new Blob([erzeugeXlsx(excelBlaetter(daten))],
-    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const heute = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `Urlaubswuensche-2027_Stand-${heute}.xlsx`;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
-}
-
-function zeigeReiter(name) {
-  for (const b of document.querySelectorAll('[data-reiter]')) {
-    b.setAttribute('aria-selected', String(b.dataset.reiter === name));
-    $(`reiter-${b.dataset.reiter}`).hidden = b.dataset.reiter !== name;
-  }
-  if (name === 'einstellungen' && daten) {
-    $('frist').value = daten.einstellungen.frist_eingabe;
-    $('dezember-hinweis').value = daten.einstellungen.dezember_hinweis;
-  }
-  meldung('');
+  if (!fehler.behandelt) meldung(fehlerText(fehler.message));
 }
 
 // ---------------------------------------------------------------- Anmeldung
 
-function zeigeLogin(text) {
-  $('verwaltung').hidden = true;
-  $('abmelden').hidden = true;
-  $('login').hidden = false;
-  meldung(text, $('login-meldung'));
+function abmelden(text = '') {
+  sitzung.logout();
+  ich = null;
+  $('wer').textContent = 'Verwaltung';
+  zeigeAnsicht('login');
+  meldung(text);
   $('login-name').focus();
 }
 
-async function zeigeVerwaltung() {
-  $('login').hidden = true;
-  $('verwaltung').hidden = false;
-  $('abmelden').hidden = false;
-  zeigeReiter('personen');
+async function nachLogin() {
   try {
-    await laden();
+    ich = await aufruf('org_ich');
   } catch (fehler) {
     fehlerAnzeigen(fehler);
+    return;
   }
-}
-
-function abmelden(text) {
-  // Anmeldung auch bei Supabase beenden, damit das Erneuerungs-Token ungültig wird.
-  if (sitzung?.token) abmeldenServer(sitzung.token).catch(() => {});
-  sitzung = null;
-  daten = null;
-  sitzungLoeschen();
-  $('personen').replaceChildren();
-  $('wochen').replaceChildren();
-  zeigeLogin(typeof text === 'string' ? text : '');
+  $('wer').textContent = `Angemeldet als ${ich.anzeigename}`;
+  $('nav-organisatoren').hidden = !ich.ist_hauptadmin;
+  await zeigeListe();
 }
 
 async function login(ereignis) {
   ereignis.preventDefault();
-  const name = $('login-name').value.trim().toLowerCase();
+  meldung('');
+  const name = $('login-name').value;
   const passwort = $('login-passwort').value;
-  if (!name || !passwort) return meldung('Bitte Benutzername und Passwort eingeben.', $('login-meldung'));
-  const email = name.includes('@') ? name : `${name}@${LOGIN_DOMAIN}`;
+  if (!name.trim() || !passwort) return meldung('Bitte Benutzername und Passwort eingeben.');
   $('login-knopf').disabled = true;
   try {
-    sitzung = sitzungSpeichern(await anmelden(email, passwort));
+    await sitzung.login(name, passwort);
     $('login-passwort').value = '';
-    meldung('', $('login-meldung'));
-    await zeigeVerwaltung();
+    await nachLogin();
   } catch (fehler) {
-    meldung(fehler.status === 429
-      ? 'Zu viele Versuche. Bitte warte einige Minuten.'
-      : fehler.message === 'KEINE_VERBINDUNG'
-        ? ADMIN_FEHLER.KEINE_VERBINDUNG
-        : 'Benutzername oder Passwort ist falsch.', $('login-meldung'));
+    meldung(fehler.status === 429 ? 'Zu viele Versuche. Bitte warte einige Minuten.'
+      : fehler.message === 'KEINE_VERBINDUNG' ? fehlerText('KEINE_VERBINDUNG')
+        : 'Benutzername oder Passwort ist falsch.');
   } finally {
     $('login-knopf').disabled = false;
   }
 }
 
-function start() {
-  $('login-form').addEventListener('submit', login);
-  $('abmelden').addEventListener('click', () => abmelden(''));
-  $('neu-form').addEventListener('submit', anlegen);
-  $('einstellungen-form').addEventListener('submit', einstellungenSpeichern);
-  $('excel').addEventListener('click', excelHerunterladen);
-  for (const b of document.querySelectorAll('[data-reiter]')) {
-    b.addEventListener('click', () => zeigeReiter(b.dataset.reiter));
+// ---------------------------------------------------------------- Registrierung
+
+async function zeigeRegistrierung(code) {
+  einladungsCode = code;
+  zeigeAnsicht('registrieren');
+  try {
+    const r = await rpc('einladung_pruefen', { p_code: code });
+    if (!r.gueltig) {
+      $('reg-form').hidden = true;
+      meldung('Dieser Einladungslink ist ungültig, abgelaufen oder wurde schon benutzt. Bitte frag nach einem neuen.');
+      return;
+    }
+    $('reg-einladung').textContent = `Eingeladen von ${r.eingeladen_von}.`;
+  } catch (fehler) {
+    meldung(fehlerText(fehler.message));
   }
-  sitzung = sitzungLesen();
-  if (sitzung) zeigeVerwaltung(); else zeigeLogin('');
+}
+
+async function registrierenAbsenden(ereignis) {
+  ereignis.preventDefault();
+  meldung('');
+  const anzeigename = $('reg-anzeigename').value.trim();
+  const name = $('reg-name').value.trim().toLowerCase();
+  const passwort = $('reg-passwort').value;
+  if (!anzeigename) return meldung('Bitte deinen Namen eingeben.');
+  if (!BENUTZERNAME.test(name)) {
+    return meldung('Der Benutzername darf nur Kleinbuchstaben, Ziffern, Punkt und Bindestrich enthalten (2–30 Zeichen).');
+  }
+  if (passwort.length < 10) return meldung('Das Passwort muss mindestens 10 Zeichen lang sein.');
+  if (passwort !== $('reg-passwort2').value) return meldung('Die beiden Passwörter stimmen nicht überein.');
+  $('reg-knopf').disabled = true;
+  try {
+    await registrieren(sitzung.emailFuer(name), passwort, { einladung: einladungsCode, anzeigename });
+    await sitzung.login(name, passwort);
+    window.history.replaceState(null, '', window.location.pathname);
+    einladungsCode = null;
+    await nachLogin();
+  } catch (fehler) {
+    meldung(fehler.message === 'user_already_exists' || fehler.message === 'email_exists'
+      ? 'Diesen Benutzernamen gibt es schon. Bitte wähle einen anderen.'
+      : fehler.message === 'weak_password' ? 'Das Passwort ist zu schwach. Bitte wähle ein längeres.'
+        : fehler.message === 'KEINE_VERBINDUNG' ? fehlerText('KEINE_VERBINDUNG')
+          : 'Registrierung fehlgeschlagen. Die Einladung ist eventuell abgelaufen oder schon benutzt.');
+  } finally {
+    $('reg-knopf').disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------- Umfrageliste
+
+async function zeigeListe() {
+  meldung('');
+  zeigeAnsicht('liste');
+  let umfragen;
+  try {
+    umfragen = await aufruf('org_umfragen');
+  } catch (fehler) {
+    fehlerAnzeigen(fehler);
+    return;
+  }
+  const liste = $('umfragen');
+  liste.replaceChildren();
+  if (!umfragen.length) liste.append(element('li', 'klein', 'Noch keine Umfrage. Lege oben die erste an.'));
+  for (const u of umfragen) {
+    const karte = element('li', 'karte');
+    const frist = u.offen ? `Frist ${zeitpunkt(u.frist)}` : 'Frist abgelaufen';
+    const aktionen = element('div', 'karte-aktionen');
+    aktionen.append(knopf('Öffnen', 'klein-knopf', () => oeffneUmfrage(u.id)));
+    karte.append(
+      element('p', 'karte-name', u.titel),
+      element('p', 'karte-status', `${u.jahr} · ${landName(u.bundesland)} · ${u.abgegeben} von ${u.mitarbeiter} haben abgegeben · ${frist}`),
+      aktionen,
+    );
+    liste.append(karte);
+  }
+}
+
+async function oeffneUmfrage(id) {
+  meldung('');
+  zeigeAnsicht('umfrage');
+  await zeigeUmfrage(id);
+}
+
+async function umfrageAnlegen(ereignis) {
+  ereignis.preventDefault();
+  meldung('');
+  const jahr = Number($('neu-jahr').value);
+  try {
+    const id = await aufruf('org_umfrage_anlegen', {
+      p_titel: $('neu-titel').value.trim() || `Urlaubswünsche ${jahr}`,
+      p_jahr: jahr,
+      p_bundesland: $('neu-land').value,
+    });
+    $('neu-titel').value = '';
+    await oeffneUmfrage(id);
+  } catch (fehler) {
+    fehlerAnzeigen(fehler);
+  }
+}
+
+// ---------------------------------------------------------------- Konto
+
+function zeigeKonto() {
+  meldung('');
+  $('einladung-ergebnis').hidden = true;
+  zeigeAnsicht('konto');
+}
+
+async function einladen() {
+  meldung('');
+  try {
+    const r = await aufruf('org_einladung_erstellen');
+    $('einladung-link').textContent = `${r.link} (gültig bis ${zeitpunkt(r.gueltig_bis)})`;
+    const kopierKnopf = knopf('Link kopieren', 'zweitrangig klein-knopf', () => kopieren(r.link, kopierKnopf));
+    $('einladung-aktionen').replaceChildren(kopierKnopf, whatsappLink(
+      `Hallo, hier ist deine Einladung als Organisator für die Urlaubsumfragen. Der Link ist 7 Tage gültig und nur einmal verwendbar:\n${r.link}`));
+    $('einladung-ergebnis').hidden = false;
+  } catch (fehler) {
+    fehlerAnzeigen(fehler);
+  }
+}
+
+async function passwortAendernAbsenden(ereignis) {
+  ereignis.preventDefault();
+  meldung('');
+  const passwort = $('pw-neu').value;
+  if (passwort.length < 10) return meldung('Das Passwort muss mindestens 10 Zeichen lang sein.');
+  if (passwort !== $('pw-neu2').value) return meldung('Die beiden Passwörter stimmen nicht überein.');
+  try {
+    await passwortAendern(await sitzung.token(), passwort);
+    $('pw-neu').value = '';
+    $('pw-neu2').value = '';
+    meldung('Passwort geändert.');
+  } catch (fehler) {
+    meldung(fehler.message === 'same_password' ? 'Das ist schon dein aktuelles Passwort.'
+      : fehler.message === 'weak_password' ? 'Das Passwort ist zu schwach. Bitte wähle ein längeres.'
+        : fehlerText(fehler.message));
+  }
+}
+
+// ---------------------------------------------------------------- Organisatoren (Hauptadmin)
+
+async function zeigeOrganisatoren() {
+  meldung('');
+  zeigeAnsicht('organisatoren');
+  let liste;
+  try {
+    liste = await aufruf('haupt_organisatoren');
+  } catch (fehler) {
+    fehlerAnzeigen(fehler);
+    return;
+  }
+  $('organisatoren').replaceChildren(...liste.map((o) => {
+    const karte = element('li', 'karte');
+    const rolle = o.ist_hauptadmin ? ' · Hauptadmin' : '';
+    const status = [`${o.anzahl_umfragen} Umfrage(n)`, `eingeladen von ${o.eingeladen_von || '–'}`,
+      `seit ${zeitpunkt(o.angelegt_am)}`].join(' · ');
+    karte.append(
+      element('p', 'karte-name', `${o.anzeigename} (${o.benutzername})${rolle}`),
+      element('p', o.gesperrt ? 'karte-status offen' : 'karte-status', o.gesperrt ? `GESPERRT · ${status}` : status),
+    );
+    if (!o.ich) {
+      const aktionen = element('div', 'karte-aktionen');
+      aktionen.append(knopf(o.gesperrt ? 'Entsperren' : 'Sperren',
+        o.gesperrt ? 'zweitrangig klein-knopf' : 'gefahr klein-knopf', async () => {
+          if (!o.gesperrt && !window.confirm(`${o.anzeigename} sperren?\n\nDie Person kann sich dann nicht mehr anmelden. Ihre Umfragen und Mitarbeiter-Links bleiben bestehen.`)) return;
+          try {
+            await aufruf('haupt_sperren', { p_user_id: o.user_id, p_gesperrt: !o.gesperrt });
+            await zeigeOrganisatoren();
+          } catch (fehler) {
+            fehlerAnzeigen(fehler);
+          }
+        }));
+      karte.append(aktionen);
+    }
+    return karte;
+  }));
+}
+
+// ---------------------------------------------------------------- Start
+
+function start() {
+  const jetzt = new Date().getFullYear();
+  fuelleJahre($('neu-jahr'), jetzt, jetzt + 3, jetzt + 1);
+  fuelleLaender($('neu-land'), 'BY');
+  $('neu-jahr').addEventListener('change', () => {
+    $('neu-titel').placeholder = `Urlaubswünsche ${$('neu-jahr').value}`;
+  });
+  $('neu-titel').placeholder = `Urlaubswünsche ${jetzt + 1}`;
+
+  $('login-form').addEventListener('submit', login);
+  $('reg-form').addEventListener('submit', registrierenAbsenden);
+  $('neu-umfrage-form').addEventListener('submit', umfrageAnlegen);
+  $('einladen').addEventListener('click', einladen);
+  $('passwort-form').addEventListener('submit', passwortAendernAbsenden);
+  $('abmelden').addEventListener('click', () => abmelden(''));
+  for (const b of document.querySelectorAll('[data-ziel]')) {
+    b.addEventListener('click', () => {
+      if (b.dataset.ziel === 'liste') zeigeListe();
+      if (b.dataset.ziel === 'konto') zeigeKonto();
+      if (b.dataset.ziel === 'organisatoren') zeigeOrganisatoren();
+    });
+  }
+  initUmfrage({ aufruf, fehlerAnzeigen, zurueck: zeigeListe });
+
+  const einladung = window.location.hash.match(/einladung=([0-9a-f]{32})/);
+  if (einladung) {
+    sitzung.logout();
+    zeigeRegistrierung(einladung[1]);
+  } else if (sitzung.istAngemeldet()) {
+    nachLogin();
+  } else {
+    abmelden('');
+  }
 }
 
 start();

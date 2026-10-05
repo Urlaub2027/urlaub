@@ -140,7 +140,7 @@ body.admin .kopf, body.admin main { max-width: 60rem; }
 
 .formular-box { display: grid; gap: 14px; max-width: 28rem; }
 .feld { display: grid; gap: 6px; font-weight: 600; }
-.feld input, .feld textarea {
+.feld input, .feld textarea, .feld select {
   font: inherit;
   font-weight: 400;
   color: var(--text);
@@ -151,7 +151,7 @@ body.admin .kopf, body.admin main { max-width: 60rem; }
   min-height: 44px;
   width: 100%;
 }
-.feld input:focus, .feld textarea:focus { outline: 2px solid var(--akzent); outline-offset: 1px; }
+.feld input:focus, .feld textarea:focus, .feld select:focus { outline: 2px solid var(--akzent); outline-offset: 1px; }
 
 .kennzahlen { display: grid; gap: 10px; }
 .kennzahl { margin: 0; font-size: 1.2rem; font-weight: 700; }
@@ -218,3 +218,17 @@ button.gefahr { background: transparent; color: var(--fehler-rand); border: 1px 
 .tabelle td:nth-child(3) { text-align: right; font-variant-numeric: tabular-nums; }
 .tabelle tr.viel td { background: var(--fehler); }
 .tabelle td:first-child, .tabelle td:nth-child(3) { white-space: nowrap; }
+
+.navigation { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.navigation [hidden] { display: none; }
+.karte-warnung { margin: 0 0 10px; font-size: 0.92rem; color: var(--fehler-rand); font-weight: 600; }
+.monate-wahl { border: 0; padding: 0; margin: 0; }
+.monate-wahl legend { font-weight: 600; padding: 0 0 6px; }
+.monate-raster { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: 6px 12px; }
+.monat-wahl { display: flex; align-items: center; gap: 6px; font-weight: 400; min-height: 32px; }
+.monat-wahl input { width: 20px; height: 20px; accent-color: var(--akzent); }
+.link-anzeige { word-break: break-all; font-size: 0.92rem; }
+#zurueck { margin-top: 12px; }
+#umfrage-loeschen { width: auto; padding: 0 18px; margin: 8px 0 32px; }
+.feld select:disabled { opacity: 0.6; }
+@media (max-width: 30rem) { .kopf-admin { flex-direction: column; } .navigation { justify-content: flex-start; } }

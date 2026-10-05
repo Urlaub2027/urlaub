@@ -7,7 +7,7 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://*.supabase.co; img-src data:; base-uri 'none'; form-action 'none'">
-  <title>Urlaubswünsche 2027 – Verwaltung</title>
+  <title>Urlaubswünsche – Verwaltung</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
   <script type="module" src="admin.js"></script>
@@ -15,14 +15,21 @@
 <body class="admin">
   <header class="kopf kopf-admin">
     <div>
-      <h1>Urlaubswünsche 2027</h1>
-      <p class="begruessung">Verwaltung</p>
+      <h1>Urlaubswünsche</h1>
+      <p id="wer" class="begruessung">Verwaltung</p>
     </div>
-    <button id="abmelden" type="button" class="zweitrangig klein-knopf" hidden>Abmelden</button>
+    <nav id="navigation" class="navigation" hidden>
+      <button type="button" class="zweitrangig klein-knopf" data-ziel="liste">Meine Umfragen</button>
+      <button type="button" class="zweitrangig klein-knopf" data-ziel="konto">Konto &amp; Einladen</button>
+      <button type="button" class="zweitrangig klein-knopf" data-ziel="organisatoren" id="nav-organisatoren" hidden>Organisatoren</button>
+      <button type="button" class="zweitrangig klein-knopf" id="abmelden">Abmelden</button>
+    </nav>
   </header>
 
   <main>
-    <section id="login" hidden>
+    <p id="meldung" class="meldung" role="alert" hidden></p>
+
+    <section id="ansicht-login" hidden>
       <form id="login-form" class="box formular-box" novalidate>
         <h2>Anmelden</h2>
         <label class="feld">Benutzername
@@ -31,18 +38,56 @@
         <label class="feld">Passwort
           <input id="login-passwort" type="password" autocomplete="current-password" required>
         </label>
-        <p id="login-meldung" class="meldung" role="alert" hidden></p>
         <button type="submit" id="login-knopf">Anmelden</button>
       </form>
     </section>
 
-    <section id="verwaltung" hidden>
+    <section id="ansicht-registrieren" hidden>
+      <form id="reg-form" class="box formular-box" novalidate>
+        <h2>Als Organisator registrieren</h2>
+        <p id="reg-einladung" class="klein"></p>
+        <label class="feld">Dein Name (wird anderen angezeigt)
+          <input id="reg-anzeigename" type="text" autocomplete="name" required>
+        </label>
+        <label class="feld">Benutzername zum Anmelden (Kleinbuchstaben, Ziffern, Punkt, Bindestrich)
+          <input id="reg-name" type="text" autocomplete="username" autocapitalize="none" required>
+        </label>
+        <label class="feld">Passwort (mindestens 10 Zeichen)
+          <input id="reg-passwort" type="password" autocomplete="new-password" required>
+        </label>
+        <label class="feld">Passwort wiederholen
+          <input id="reg-passwort2" type="password" autocomplete="new-password" required>
+        </label>
+        <button type="submit" id="reg-knopf">Registrieren</button>
+      </form>
+    </section>
+
+    <section id="ansicht-liste" hidden>
+      <form id="neu-umfrage-form" class="box formular-box" novalidate>
+        <h2>Neue Umfrage</h2>
+        <label class="feld">Titel
+          <input id="neu-titel" type="text" autocomplete="off">
+        </label>
+        <label class="feld">Jahr
+          <select id="neu-jahr"></select>
+        </label>
+        <label class="feld">Bundesland (für die Feiertage)
+          <select id="neu-land"></select>
+        </label>
+        <button type="submit">Umfrage anlegen</button>
+      </form>
+      <h2>Meine Umfragen</h2>
+      <ul id="umfragen" class="karten"></ul>
+    </section>
+
+    <section id="ansicht-umfrage" hidden>
+      <button type="button" id="zurueck" class="zweitrangig klein-knopf">← Meine Umfragen</button>
       <div class="box kennzahlen">
+        <h2 id="u-titel"></h2>
         <p id="kennzahl" class="kennzahl"></p>
         <p id="frist-anzeige" class="klein"></p>
         <button id="excel" type="button">Excel herunterladen</button>
       </div>
-      <p id="meldung" class="meldung" role="alert" hidden></p>
 
       <nav class="reiter" role="tablist">
         <button type="button" role="tab" data-reiter="personen" aria-selected="true">Mitarbeiter</button>
@@ -73,15 +118,92 @@
 
       <section id="reiter-einstellungen" hidden>
         <form id="einstellungen-form" class="box formular-box" novalidate>
-          <label class="feld">Frist (deutsche Zeit)
-            <input id="frist" type="datetime-local" required>
+          <label class="feld">Titel
+            <input id="e-titel" type="text" required>
           </label>
-          <label class="feld">Hinweis zur Dezember-Sperre
-            <textarea id="dezember-hinweis" rows="3" required></textarea>
+          <p id="e-grunddaten-hinweis" class="klein" hidden>Jahr, Bundesland und Arbeitstage sind gesperrt, weil schon Wünsche abgegeben wurden.</p>
+          <label class="feld">Jahr
+            <select id="e-jahr"></select>
+          </label>
+          <label class="feld">Bundesland (für die Feiertage)
+            <select id="e-land"></select>
+          </label>
+          <label class="feld">Arbeitstage pro Woche
+            <select id="e-arbeitstage">
+              <option value="6">6 (Montag–Samstag)</option>
+              <option value="5">5 (Montag–Freitag)</option>
+            </select>
+          </label>
+          <label class="feld">Urlaubstage pro Person
+            <input id="e-urlaubstage" type="number" min="1" max="366" inputmode="numeric" required>
+          </label>
+          <label class="feld">Mindestens Wochen
+            <input id="e-min" type="number" min="1" max="53" inputmode="numeric" required>
+          </label>
+          <label class="feld">Höchstens Wochen
+            <input id="e-max" type="number" min="1" max="53" inputmode="numeric" required>
+          </label>
+          <label class="feld">Höchstens Wochen am Stück
+            <input id="e-stueck" type="number" min="1" max="53" inputmode="numeric" required>
+          </label>
+          <fieldset class="feld monate-wahl">
+            <legend>Gesperrte Monate</legend>
+            <div id="e-monate" class="monate-raster"></div>
+          </fieldset>
+          <label class="feld">Hinweis zu den gesperrten Monaten
+            <textarea id="e-hinweis" rows="2"></textarea>
+          </label>
+          <label class="feld">Frist (deutsche Zeit)
+            <input id="e-frist" type="datetime-local" required>
           </label>
           <button type="submit">Einstellungen speichern</button>
         </form>
+
+        <div class="box formular-box">
+          <h2>Zusätzliche freie Tage</h2>
+          <p class="klein">Örtliche Feiertage oder Betriebsruhe, z. B. das Augsburger Friedensfest. Sie kosten keinen Urlaubstag.</p>
+          <ul id="freie-tage" class="karten"></ul>
+          <form id="frei-form" class="neu-form" novalidate>
+            <label class="feld">Datum
+              <input id="frei-datum" type="date" required>
+            </label>
+            <label class="feld">Bezeichnung
+              <input id="frei-name" type="text" required>
+            </label>
+            <button type="submit">Hinzufügen</button>
+          </form>
+        </div>
+
+        <button type="button" id="umfrage-loeschen" class="gefahr">Umfrage löschen</button>
       </section>
+    </section>
+
+    <section id="ansicht-konto" hidden>
+      <div class="box formular-box">
+        <h2>Organisator einladen</h2>
+        <p class="klein">Der Link ist 7 Tage gültig und nur einmal verwendbar. Die eingeladene Person kann danach eigene Umfragen anlegen und selbst weitere Personen einladen. Deine Umfragen sieht sie nicht.</p>
+        <button type="button" id="einladen">Einladungslink erzeugen</button>
+        <div id="einladung-ergebnis" hidden>
+          <p id="einladung-link" class="link-anzeige"></p>
+          <div id="einladung-aktionen" class="karte-aktionen"></div>
+        </div>
+      </div>
+      <form id="passwort-form" class="box formular-box" novalidate>
+        <h2>Passwort ändern</h2>
+        <label class="feld">Neues Passwort (mindestens 10 Zeichen)
+          <input id="pw-neu" type="password" autocomplete="new-password" required>
+        </label>
+        <label class="feld">Wiederholen
+          <input id="pw-neu2" type="password" autocomplete="new-password" required>
+        </label>
+        <button type="submit">Passwort ändern</button>
+      </form>
+    </section>
+
+    <section id="ansicht-organisatoren" hidden>
+      <h2>Organisatoren</h2>
+      <p class="klein">Gesperrte Organisatoren können sich nicht mehr anmelden. Ihre Umfragen und Mitarbeiter-Links bleiben bestehen.</p>
+      <ul id="organisatoren" class="karten"></ul>
     </section>
   </main>
 </body>
