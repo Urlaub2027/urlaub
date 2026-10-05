@@ -132,3 +132,33 @@ test('Organisator kann Tabellen nicht direkt lesen', async () => {
     await assert.rejects(als(db, 'authenticated', chef, `select * from urlaub.${t}`), /permission denied/, t);
   }
 });
+
+async function beantworteteUmfrage() {
+  const id = await neueUmfrage(chef, 'Löschen');
+  await alsChef('select public.org_mitarbeiter_anlegen($1, $2)', [id, 'Anna']);
+  const m = (await db.query('select id from urlaub.mitarbeiter where umfrage_id = $1', [id])).rows[0].id;
+  const uf = (await db.query("select id from urlaub.fragen where umfrage_id = $1 and typ = 'urlaubswochen'", [id])).rows[0].id;
+  const ja = (await db.query(
+    "insert into urlaub.fragen (umfrage_id, position, typ, text) values ($1, 2, 'janein', 'Ja?') returning id", [id])).rows[0].id;
+  const abh = (await db.query(
+    "insert into urlaub.fragen (umfrage_id, position, typ, text) values ($1, 3, 'text_kurz', 'Warum?') returning id", [id])).rows[0].id;
+  await db.query("insert into urlaub.antworten (mitarbeiter_id, frage_id, wert) values ($1, $2, '[1,2]'), ($1, $3, 'true')", [m, uf, ja]);
+  await db.query("insert into urlaub.bedingungen (frage_id, quelle_id, operator, werte) values ($1, $2, 'ist', 'true')", [abh, ja]);
+  return { id, m, uf };
+}
+
+test('Umfrage mit Antworten und Bedingungen lässt sich löschen', async () => {
+  const { id } = await beantworteteUmfrage();
+  await alsChef('select public.org_umfrage_loeschen($1)', [id]);
+  for (const sql of [
+    'select count(*)::int as n from urlaub.fragen where umfrage_id = $1',
+    'select count(*)::int as n from urlaub.mitarbeiter where umfrage_id = $1',
+    'select count(*)::int as n from urlaub.antworten a join urlaub.mitarbeiter m on m.id = a.mitarbeiter_id where m.umfrage_id = $1',
+  ]) assert.equal((await db.query(sql, [id])).rows[0].n, 0, sql);
+  assert.equal((await db.query('select count(*)::int as n from urlaub.bedingungen')).rows[0].n, 0);
+});
+
+test('Beantwortete Frage lässt sich einzeln nicht löschen', async () => {
+  const { uf } = await beantworteteUmfrage();
+  await assert.rejects(db.query('delete from urlaub.fragen where id = $1', [uf]), /foreign key/);
+});

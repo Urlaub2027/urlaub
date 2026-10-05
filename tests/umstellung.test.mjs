@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 import { neueDatenbank, als, SCHEMA, SCHEMA_V2 } from './helfer.mjs';
 
 const AW = '11111111-1111-1111-1111-111111111111';
+const BB = '22222222-2222-2222-2222-222222222222';
 let db;
 let umfrage;
+let umfrage2;
+let benId;
 let annaId;
 let frist;
 
@@ -23,13 +26,21 @@ before(async () => {
   const m = await db.query("insert into urlaub.mitarbeiter (umfrage_id, name) values ($1, 'Anna'), ($1, 'Ben') returning id, name", [umfrage]);
   annaId = m.rows.find((x) => x.name === 'Anna').id;
   await db.query("insert into urlaub.abgaben (mitarbeiter_id, wochen, geaendert_am) values ($1, '{12,30}', '2026-10-01 10:00:00+00')", [annaId]);
-  frist = (await db.query("select to_char(frist at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as f from urlaub.umfragen")).rows[0].f;
+  await db.query(`insert into urlaub.organisatoren (user_id, anzeigename, benutzername) values ($1, 'bb', 'bb')`, [BB]);
+  umfrage2 = (await db.query(`insert into urlaub.umfragen
+      (organisator_id, titel, jahr, bundesland, arbeitstage_pro_woche, urlaubstage, min_wochen, max_wochen,
+       max_am_stueck, gesperrte_monate, sperr_hinweis, frist)
+    values ($1, 'Team B 2028', 2028, 'BY', 6, 24, 1, 3, 3, '{1}', 'Januar zu.',
+            '2027-11-30 23:59:59 Europe/Berlin') returning id`, [BB])).rows[0].id;
+  benId = (await db.query("insert into urlaub.mitarbeiter (umfrage_id, name) values ($1, 'Ben B') returning id", [umfrage2])).rows[0].id;
+  await db.query("insert into urlaub.abgaben (mitarbeiter_id, wochen) values ($1, '{5,6,7}')", [benId]);
+  frist = (await db.query("select to_char(frist at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as f from urlaub.umfragen where id = $1", [umfrage])).rows[0].f;
   await db.exec(SCHEMA);
   await db.exec(SCHEMA); // zweites Mal: darf nichts verdoppeln
 });
 
 test('Umfrage behält Titel, Frist und freie Tage; alte Spalten sind weg', async () => {
-  const u = (await db.query("select titel, to_char(frist at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as f from urlaub.umfragen")).rows;
+  const u = (await db.query("select titel, to_char(frist at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as f from urlaub.umfragen where id = $1", [umfrage])).rows;
   assert.deepEqual(u, [{ titel: 'Urlaubswünsche 2027', f: frist }]);
   const spalten = (await db.query(`select column_name from information_schema.columns
     where table_schema = 'urlaub' and table_name = 'umfragen' order by column_name`)).rows.map((r) => r.column_name);
@@ -41,14 +52,15 @@ test('Umfrage behält Titel, Frist und freie Tage; alte Spalten sind weg', async
 });
 
 test('Genau eine Urlaubswochen-Frage mit den bisherigen Einstellungen', async () => {
-  const f = (await db.query('select * from urlaub.fragen')).rows;
+  assert.equal((await db.query('select count(*)::int as n from urlaub.fragen')).rows[0].n, 2);
+  const f = (await db.query('select * from urlaub.fragen where umfrage_id = $1', [umfrage])).rows;
   assert.equal(f.length, 1);
   assert.equal(f[0].typ, 'urlaubswochen');
   assert.equal(f[0].position, 1);
   assert.equal(f[0].aktiv, true);
   assert.deepEqual([f[0].jahr, f[0].bundesland, f[0].arbeitstage_pro_woche, f[0].sperr_hinweis],
     [2027, 'HE', 5, 'Sommer und Dezember zu.']);
-  const regeln = Object.fromEntries((await db.query('select art, wert, aktiv from urlaub.regeln order by art')).rows
+  const regeln = Object.fromEntries((await db.query('select art, wert, aktiv from urlaub.regeln where frage_id = $1 order by art', [f[0].id])).rows
     .map((r) => [r.art, [r.wert, r.aktiv]]));
   assert.deepEqual(regeln, {
     gesperrte_monate: [[7, 12], true],
@@ -58,14 +70,29 @@ test('Genau eine Urlaubswochen-Frage mit den bisherigen Einstellungen', async ()
     min_wochen: [2, true],
     pflicht: [null, true],
   });
+  // Zweite Umfrage: eigene Frage mit eigenen Werten
+  const f2 = (await db.query('select * from urlaub.fragen where umfrage_id = $1', [umfrage2])).rows;
+  assert.equal(f2.length, 1);
+  assert.deepEqual([f2[0].jahr, f2[0].bundesland, f2[0].arbeitstage_pro_woche, f2[0].sperr_hinweis],
+    [2028, 'BY', 6, 'Januar zu.']);
+  const regeln2 = Object.fromEntries((await db.query('select art, wert from urlaub.regeln where frage_id = $1', [f2[0].id]))
+    .rows.map((r) => [r.art, r.wert]));
+  assert.deepEqual(regeln2, { pflicht: null, min_wochen: 1, max_wochen: 3, max_am_stueck: 3, max_urlaubstage: 24, gesperrte_monate: [1] });
 });
 
 test('Abgabe wird Antwort der Urlaubswochen-Frage, Zeitstempel bleibt', async () => {
-  const a = (await db.query('select mitarbeiter_id, wert from urlaub.antworten')).rows;
+  const alle = (await db.query(`select a.mitarbeiter_id, a.wert, f.umfrage_id from urlaub.antworten a
+    join urlaub.fragen f on f.id = a.frage_id order by a.mitarbeiter_id`)).rows;
+  assert.equal(alle.length, 2);
+  const b = alle.find((x) => Number(x.mitarbeiter_id) === Number(benId));
+  assert.equal(Number(b.umfrage_id), Number(umfrage2));
+  assert.deepEqual(b.wert, [5, 6, 7]);
+  const a = alle.filter((x) => Number(x.mitarbeiter_id) === Number(annaId));
   assert.equal(a.length, 1);
+  assert.equal(Number(a[0].umfrage_id), Number(umfrage));
   assert.equal(Number(a[0].mitarbeiter_id), Number(annaId));
   assert.deepEqual(a[0].wert, [12, 30]);
-  const z = (await db.query("select to_char(geaendert_am at time zone 'UTC', 'YYYY-MM-DD HH24:MI') as z from urlaub.abgaben")).rows;
+  const z = (await db.query("select to_char(geaendert_am at time zone 'UTC', 'YYYY-MM-DD HH24:MI') as z from urlaub.abgaben where mitarbeiter_id = $1", [annaId])).rows;
   assert.deepEqual(z, [{ z: '2026-10-01 10:00' }]);
 });
 

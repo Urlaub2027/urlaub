@@ -123,7 +123,7 @@ create table if not exists urlaub.regeln (
 create table if not exists urlaub.bedingungen (
   id        bigint generated always as identity primary key,
   frage_id  bigint not null references urlaub.fragen (id) on delete cascade,
-  quelle_id bigint not null references urlaub.fragen (id),
+  quelle_id bigint not null references urlaub.fragen (id) deferrable initially deferred,
   operator  text not null check (operator in ('ist_eine_von', 'ist_keine_von', 'enthaelt_eine_von',
                                               'enthaelt_keine_von', 'ist', 'gleich', 'groesser', 'kleiner')),
   werte     jsonb not null,
@@ -151,7 +151,7 @@ create table if not exists urlaub.abgaben (
 -- frage_id ohne "on delete": eine beantwortete Frage ist nicht löschbar.
 create table if not exists urlaub.antworten (
   mitarbeiter_id bigint not null references urlaub.mitarbeiter (id) on delete cascade,
-  frage_id       bigint not null references urlaub.fragen (id),
+  frage_id       bigint not null references urlaub.fragen (id) deferrable initially deferred,
   wert           jsonb not null,
   primary key (mitarbeiter_id, frage_id)
 );
@@ -161,7 +161,7 @@ create index if not exists antworten_frage on urlaub.antworten (frage_id);
 create table if not exists urlaub.antwort_optionen (
   mitarbeiter_id bigint not null,
   frage_id       bigint not null,
-  option_id      bigint not null references urlaub.optionen (id),
+  option_id      bigint not null references urlaub.optionen (id) deferrable initially deferred,
   primary key (mitarbeiter_id, option_id),
   foreign key (mitarbeiter_id, frage_id) references urlaub.antworten (mitarbeiter_id, frage_id) on delete cascade
 );
@@ -379,6 +379,10 @@ begin
   drop function if exists urlaub.antwort(bigint);
 end;
 $$;
+
+-- Die aufgeschobenen Fremdschlüssel der übernommenen Zeilen jetzt prüfen; sonst sperren sie
+-- die folgenden ALTER TABLE in dieser Transaktion ("pending trigger events").
+set constraints all immediate;
 
 -- ---------------------------------------------------------------------------
 -- Nacharbeiten an Tabellen (neu und umgestellt)
