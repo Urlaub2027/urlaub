@@ -23,17 +23,17 @@ export function namenAusText(text) {
 }
 
 export function erinnerungsText(name, titel, frist, link) {
-  return `Hallo ${name}, kurze Erinnerung: Bitte trag deine Antworten für „${titel}" bis ${zeitpunkt(frist)} ein. `
+  return `Hallo ${name}, kurze Erinnerung: Bitte trag deine Antworten für „${titel}“ bis ${zeitpunkt(frist)} ein. `
     + `Dein persönlicher Link (bitte nicht weitergeben):\n${link}`;
 }
 
 // Nur Namen, ohne Links – zum Posten in eine Gruppe.
 export function offenListeText(namen, titel, frist) {
-  return `Noch nicht abgegeben – „${titel}" (Frist ${zeitpunkt(frist)}):\n${namen.join('\n')}`;
+  return `Noch nicht abgegeben – „${titel}“ (Frist ${zeitpunkt(frist)}):\n${namen.join('\n')}`;
 }
 
 const TAG = 24 * 60 * 60 * 1000;
-const PAUSE = 'Supabase pausiert die Datenbank nach etwa 7 Tagen ohne Nutzung – siehe Anleitung, Abschnitt „Probleme".';
+const PAUSE = 'Supabase pausiert die Datenbank nach etwa 7 Tagen ohne Nutzung – siehe Anleitung, Abschnitt „Probleme“.';
 
 // Lebenszeichen der Wach-Automatik (null = noch nie). Ab 3 Tagen ohne Lebenszeichen: Warnung.
 export function wachStatus(zeit, jetzt = new Date()) {
