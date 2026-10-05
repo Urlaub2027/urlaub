@@ -389,3 +389,18 @@ button.editor-knopf { width: auto; padding: 0 22px; justify-self: start; }
   .regel-zeile { grid-template-columns: 1fr; }
   .editor-paar { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------- Reiter „Antworten“ (Verwaltung) */
+
+.antwort-box { margin-bottom: 16px; }
+.antwort-box.aus { background: var(--gesperrt); }
+.antwort-frage { font-size: 1rem; margin: 0 0 4px; overflow-wrap: anywhere; }
+.antwort-box .klein { margin: 0 0 8px; }
+.antwort-box .tabelle-rahmen { margin-bottom: 0; }
+.tabelle.auswahl td:first-child { white-space: normal; overflow-wrap: anywhere; }
+.tabelle.auswahl th:nth-child(2), .tabelle.auswahl td:nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tabelle.auswahl td:nth-child(3) { text-align: left; white-space: normal; font-variant-numeric: normal; }
+.tabelle tr.aus td { color: var(--feiertag); }
+.antwort-werte { margin: 0; padding-left: 1.2rem; }
+.antwort-werte li { margin: 0 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#umfrage-kopieren { width: auto; padding: 0 18px; }

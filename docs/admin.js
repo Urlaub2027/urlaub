@@ -160,11 +160,14 @@ async function zeigeListe() {
   for (const u of umfragen) {
     const karte = element('li', 'karte');
     const frist = u.offen ? `Frist ${zeitpunkt(u.frist)}` : 'Frist abgelaufen';
+    // Jahr und Bundesland gibt es nur mit einer Frage „Urlaubswochen“.
+    const status = [u.jahr ?? null, u.bundesland ? landName(u.bundesland) : null,
+      `${u.abgegeben} von ${u.mitarbeiter} haben abgegeben`, frist].filter((t) => t !== null);
     const aktionen = element('div', 'karte-aktionen');
     aktionen.append(knopf('Öffnen', 'klein-knopf', () => oeffneUmfrage(u.id)));
     karte.append(
       element('p', 'karte-name', u.titel),
-      element('p', 'karte-status', `${u.jahr} · ${landName(u.bundesland)} · ${u.abgegeben} von ${u.mitarbeiter} haben abgegeben · ${frist}`),
+      element('p', 'karte-status', status.join(' · ')),
       aktionen,
     );
     liste.append(karte);

@@ -92,7 +92,7 @@
       <nav class="reiter" role="tablist">
         <button type="button" role="tab" data-reiter="fragen" aria-selected="true">Fragen</button>
         <button type="button" role="tab" data-reiter="personen" aria-selected="false">Mitarbeiter</button>
-        <button type="button" role="tab" data-reiter="wochen" aria-selected="false">Wochen</button>
+        <button type="button" role="tab" data-reiter="antworten" aria-selected="false">Antworten</button>
         <button type="button" role="tab" data-reiter="einstellungen" aria-selected="false">Einstellungen</button>
       </nav>
 
@@ -126,14 +126,9 @@
         <ul id="personen" class="karten"></ul>
       </section>
 
-      <section id="reiter-wochen" hidden>
-        <p class="klein">Anzahl der Wünsche pro Kalenderwoche. Wochen mit vielen Wünschen sind hervorgehoben.</p>
-        <div class="tabelle-rahmen">
-          <table class="tabelle">
-            <thead><tr><th>KW</th><th>Zeitraum</th><th>Anzahl</th><th>Namen</th></tr></thead>
-            <tbody id="wochen"></tbody>
-          </table>
-        </div>
+      <section id="reiter-antworten" hidden>
+        <p class="klein">Zusammenfassung je Frage. Ausgeschaltete Fragen und Antwortmöglichkeiten sind mit „(aus)“ markiert.</p>
+        <div id="antworten-liste"></div>
       </section>
 
       <section id="reiter-einstellungen" hidden>
@@ -161,6 +156,12 @@
             </label>
             <button type="submit">Hinzufügen</button>
           </form>
+        </div>
+
+        <div class="box formular-box">
+          <h2>Umfrage kopieren</h2>
+          <p class="klein">Legt eine neue Umfrage mit allen Fragen, Antwortmöglichkeiten, Regeln, Bedingungen und freien Tagen an. Mitarbeiter und Antworten werden nicht kopiert.</p>
+          <button type="button" id="umfrage-kopieren" class="zweitrangig">Umfrage kopieren</button>
         </div>
 
         <button type="button" id="umfrage-loeschen" class="gefahr">Umfrage löschen</button>

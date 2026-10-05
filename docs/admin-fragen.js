@@ -249,6 +249,7 @@ function karte(f, i, fragen) {
 
 async function frageAnlegen() {
   if (!daten) return;
+  if (hatEntwurf() && !window.confirm('Nicht gespeicherte Eingaben verwerfen?')) return;
   const r = await aktion('org_frage_anlegen', { p_umfrage_id: umfrageId, p_typ: $('neue-frage-typ').value },
     { erfolg: (id) => { offen = Number(id); entwuerfe = new Map(); } });
   if (!r.ok) return;

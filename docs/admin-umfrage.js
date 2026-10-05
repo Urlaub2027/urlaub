@@ -1,9 +1,9 @@
-// Verwaltung: Detailansicht einer Umfrage (Fragen, Mitarbeiter, Wochen, Einstellungen, Excel).
+// Verwaltung: Detailansicht einer Umfrage (Fragen, Mitarbeiter, Antworten, Einstellungen, Excel).
 import {
   $, meldung, knopf, element, whatsappLink, kopieren, datumDeutsch,
 } from './admin-hilfe.js';
 import { zeitpunkt } from './logik.js';
-import { personenZeilen, wochenZeilen, excelBlaetter, regelHinweis } from './auswertung.js';
+import { personenZeilen, zusammenfassung, excelBlaetter } from './auswertung.js';
 import { erzeugeXlsx } from './xlsx.js';
 import { initFragen, zeigeFragen } from './admin-fragen.js';
 
@@ -19,6 +19,7 @@ export function initUmfrage(kontext) {
   $('einstellungen-form').addEventListener('submit', einstellungenSpeichern);
   $('frei-form').addEventListener('submit', freienTagHinzufuegen);
   $('excel').addEventListener('click', excelHerunterladen);
+  $('umfrage-kopieren').addEventListener('click', umfrageKopieren);
   $('umfrage-loeschen').addEventListener('click', umfrageLoeschen);
   for (const b of document.querySelectorAll('[data-reiter]')) {
     b.addEventListener('click', () => zeigeReiter(b.dataset.reiter));
@@ -32,7 +33,7 @@ export async function zeigeUmfrage(id) {
   formularFuer = null;
   for (const k of ['u-titel', 'kennzahl', 'frist-anzeige']) $(k).textContent = '';
   $('personen').replaceChildren();
-  $('wochen').replaceChildren();
+  $('antworten-liste').replaceChildren();
   zeigeFragen(null);
   zeigeReiter('fragen');
   await laden();
@@ -91,32 +92,10 @@ function urlaubsJahr() {
   return daten.fragen?.find((f) => f.typ === 'urlaubswochen')?.urlaubswochen?.jahr ?? null;
 }
 
-// Übergang bis zur neuen Auswertung (Task 6): auswertung.js erwartet noch die alte
-// Form mit wochen/urlaubstage/regelverstoss je Mitarbeiter. Wird aus den Antworten
-// auf die Urlaubswochen-Frage abgeleitet.
-function alteForm() {
-  const frage = daten.fragen?.find((f) => f.typ === 'urlaubswochen');
-  const tage = new Map((daten.kalender || []).map((k) => [k.kw, k.arbeitstage]));
-  return {
-    ...daten,
-    kalender: daten.kalender || [],
-    mitarbeiter: (daten.mitarbeiter || []).map((m) => {
-      const antwort = frage ? m.antworten?.[frage.id] : null;
-      const wochen = Array.isArray(antwort) ? antwort.map(Number) : [];
-      return {
-        ...m,
-        wochen,
-        urlaubstage: wochen.reduce((summe, kw) => summe + (tage.get(kw) || 0), 0),
-        regelverstoss: frage ? m.verstoesse?.[frage.id] || null : null,
-      };
-    }),
-  };
-}
-
 function zeichne() {
   const e = daten.einstellungen;
-  zeigeFragen(daten); // zuerst: der Fragen-Reiter hängt nicht an der Übergangs-Auswertung
-  const personen = personenZeilen(alteForm());
+  zeigeFragen(daten);
+  const personen = personenZeilen(daten);
   const jahr = urlaubsJahr();
   $('u-titel').textContent = jahr ? `${e.titel} (${jahr})` : e.titel;
   $('kennzahl').textContent = `${personen.filter((p) => p.abgegeben).length} von ${personen.length} haben abgegeben`;
@@ -124,7 +103,7 @@ function zeichne() {
     ? `Abgabe möglich bis ${zeitpunkt(e.frist)}`
     : `Frist abgelaufen am ${zeitpunkt(e.frist)} – nur noch Ansehen möglich`;
   zeichnePersonen(personen);
-  zeichneWochen();
+  zeichneAntworten();
   zeichneFreieTage();
 }
 
@@ -135,10 +114,9 @@ function zeichnePersonen(personen) {
   for (const p of personen) {
     const karte = element('li', 'karte');
     karte.append(element('p', 'karte-name', p.name));
-    karte.append(element('p', p.abgegeben ? 'karte-status ok' : 'karte-status offen', p.abgegeben
-      ? `${p.wochen} · ${p.urlaubstage} Urlaubstage · Stand ${p.stand}`
-      : 'Noch nicht abgegeben'));
-    if (p.regelverstoss) karte.append(element('p', 'karte-warnung', `⚠ ${regelHinweis(p.regelverstoss)}`));
+    karte.append(element('p', p.abgegeben ? 'karte-status ok' : 'karte-status offen',
+      p.abgegeben ? `Abgegeben, Stand ${p.stand}` : 'Noch nicht abgegeben'));
+    for (const h of p.hinweise) karte.append(element('p', 'karte-warnung', `⚠ ${h}`));
     const aktionen = element('div', 'karte-aktionen');
     const kopierKnopf = knopf('Link kopieren', 'zweitrangig klein-knopf', () => kopieren(p.link, kopierKnopf));
     aktionen.append(
@@ -160,16 +138,88 @@ function zeichnePersonen(personen) {
   }
 }
 
-function zeichneWochen() {
-  const zeilen = wochenZeilen(alteForm());
-  const max = Math.max(1, ...zeilen.map((w) => w.anzahl));
-  $('wochen').replaceChildren(...zeilen.map((w) => {
-    const tr = document.createElement('tr');
-    if (w.anzahl > 0 && w.anzahl >= Math.max(2, max * 0.75)) tr.className = 'viel';
-    for (const wert of [`KW ${w.kw}`, w.zeitraum + (w.feiertag ? ` (${w.feiertag})` : ''), w.anzahl, w.namen]) {
-      tr.append(element('td', null, String(wert)));
+// ---------------------------------------------------------------- Reiter „Antworten“
+
+const ZAHL = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2 });
+const zahl = (n) => (n === null || n === undefined ? '–' : ZAHL.format(n));
+
+function tabelle(kopf, zeilen, klasse = 'tabelle') {
+  const rahmen = element('div', 'tabelle-rahmen');
+  const t = element('table', klasse);
+  const thead = element('thead');
+  const tr = element('tr');
+  for (const k of kopf) tr.append(element('th', null, k));
+  thead.append(tr);
+  const tbody = element('tbody');
+  tbody.append(...zeilen);
+  t.append(thead, tbody);
+  rahmen.append(t);
+  return rahmen;
+}
+
+function zeile(werte, klasse = null) {
+  const tr = element('tr', klasse);
+  for (const w of werte) tr.append(element('td', null, String(w)));
+  return tr;
+}
+
+function auswahlInhalt(frage, z) {
+  const teile = [];
+  if (frage.typ === 'skala') {
+    teile.push(element('p', 'klein', z.durchschnitt === null
+      ? 'Durchschnitt: –' : `Durchschnitt: ${zahl(z.durchschnitt)}`));
+  }
+  const s = frage.skala || {};
+  const ende = (i) => (frage.typ !== 'skala' ? ''
+    : i === 0 && s.links ? ` (${s.links})` : i === z.zeilen.length - 1 && s.rechts ? ` (${s.rechts})` : '');
+  teile.push(tabelle(['Antwort', 'Anzahl', 'Namen'], z.zeilen.map((r, i) => zeile(
+    [`${r.text}${ende(i)}${r.aktiv ? '' : ' (aus)'}`, r.anzahl, r.namen.join(', ')],
+    r.aktiv ? null : 'aus',
+  )), 'tabelle auswahl'));
+  return teile;
+}
+
+function listeInhalt(werte) {
+  const ul = element('ul', 'antwort-werte');
+  ul.append(...werte.map((w) => element('li', null, `${w.name} – ${w.text}`)));
+  return ul;
+}
+
+function wochenInhalt(z) {
+  const max = Math.max(1, ...z.wochen.map((w) => w.anzahl));
+  return tabelle(['KW', 'Zeitraum', 'Anzahl', 'Namen'], z.wochen.map((w) => zeile(
+    [`KW ${w.kw}`, w.zeitraum + (w.feiertag ? ` (${w.feiertag})` : ''), w.anzahl, w.namen],
+    w.anzahl > 0 && w.anzahl >= Math.max(2, max * 0.75) ? 'viel' : null,
+  )));
+}
+
+function zeichneAntworten() {
+  const fragen = (daten.fragen || []).filter((f) => f.typ !== 'hinweis');
+  if (!fragen.length) {
+    $('antworten-liste').replaceChildren(element('p', 'klein', 'Noch keine Fragen. Lege sie im Reiter „Fragen“ an.'));
+    return;
+  }
+  $('antworten-liste').replaceChildren(...fragen.map((f, i) => {
+    const z = zusammenfassung(f, daten);
+    const box = element('div', f.aktiv === false ? 'box antwort-box aus' : 'box antwort-box');
+    box.append(element('h3', 'antwort-frage', `${i + 1}. ${f.text}${f.aktiv === false ? ' (aus)' : ''}`));
+    box.append(element('p', 'klein', `${z.beantwortet} beantwortet`));
+    if (z.art === 'auswahl') {
+      box.append(...auswahlInhalt(f, z));
+    } else if (z.art === 'wochen') {
+      box.append(wochenInhalt(z));
+    } else if (!z.beantwortet) {
+      box.append(element('p', 'klein', 'Noch keine Antworten.'));
+    } else if (z.art === 'zahl') {
+      box.append(
+        element('p', 'klein', `Kleinster Wert: ${zahl(z.kleinster)} · größter Wert: ${zahl(z.groesster)}`
+          + ` · Durchschnitt: ${zahl(z.durchschnitt)}`),
+        listeInhalt(z.werte.map((w) => ({ name: w.name, text: zahl(w.wert) }))),
+      );
+    } else {
+      box.append(listeInhalt(z.werte));
     }
-    return tr;
+    return box;
   }));
 }
 
@@ -241,9 +291,29 @@ async function umfrageLoeschen() {
   }
 }
 
+async function umfrageKopieren() {
+  if (!datenPasst()) return;
+  if (!window.confirm('Kopie mit allen Fragen anlegen? Mitarbeiter und Antworten werden nicht kopiert.')) return;
+  meldung('');
+  const knopfKopieren = $('umfrage-kopieren');
+  knopfKopieren.disabled = true;
+  let neu;
+  try {
+    neu = await ctx.aufruf('org_umfrage_kopieren', { p_umfrage_id: umfrageId });
+  } catch (fehler) {
+    ctx.fehlerAnzeigen(fehler);
+    return;
+  } finally {
+    knopfKopieren.disabled = false;
+  }
+  window.scrollTo(0, 0);
+  await zeigeUmfrage(neu);
+  if (Number(umfrageId) === Number(neu) && datenPasst()) meldung('Kopie angelegt. Du siehst jetzt die Kopie.');
+}
+
 function excelHerunterladen() {
   if (!datenPasst()) return;
-  const blob = new Blob([erzeugeXlsx(excelBlaetter(alteForm()))],
+  const blob = new Blob([erzeugeXlsx(excelBlaetter(daten))],
     { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const heute = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
   const name = daten.einstellungen.titel.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'Umfrage';
