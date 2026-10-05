@@ -12,8 +12,10 @@ before(async () => {
   await db.exec(SCHEMA_V1);
   await db.query("insert into auth.users (id, email) values ($1, 'aw@example.com')", [AW]);
   await db.query("insert into urlaub.admins (user_id, notiz) values ($1, 'aw')", [AW]);
-  await db.exec(`update urlaub.einstellungen set frist = '2026-11-30 23:59:59 Europe/Berlin',
+  await db.exec(`update urlaub.einstellungen set link_basis = 'https://beispiel.invalid/urlaub/',
+                 urlaubstage = 30, max_wochen = 5, frist = '2026-11-30 23:59:59 Europe/Berlin',
                  dezember_hinweis = 'Inventur im Dezember.'`);
+  await db.query("insert into urlaub.feiertage (datum, name) values ('2027-08-09', 'Betriebsruhe')");
   const r = await db.query("insert into urlaub.mitarbeiter (name) values ('Anna'), ('Ben') returning name, code");
   annaCode = r.rows.find((x) => x.name === 'Anna').code;
   await db.query(`insert into urlaub.abgaben (mitarbeiter_id, wochen)
@@ -42,14 +44,14 @@ test('Umfrage Nr. 1 übernimmt Einstellungen', async () => {
   assert.equal(u[0].organisator_id, AW);
   assert.equal(u[0].f, fristVorher);
   assert.equal(u[0].sperr_hinweis, 'Inventur im Dezember.');
-  assert.equal(u[0].max_wochen, 6);
+  assert.equal(u[0].max_wochen, 5);
   assert.equal(u[0].max_am_stueck, 3);
-  assert.equal(u[0].urlaubstage, 36);
+  assert.equal(u[0].urlaubstage, 30);
   assert.deepEqual(u[0].gesperrte_monate, [12]);
-  const frei = (await db.query('select datum::text as d, name from urlaub.freie_tage')).rows;
-  assert.deepEqual(frei, [{ d: '2027-08-15', name: 'Mariä Himmelfahrt' }]);
+  const frei = (await db.query('select datum::text as d, name from urlaub.freie_tage order by datum')).rows;
+  assert.deepEqual(frei, [{ d: '2027-08-09', name: 'Betriebsruhe' }, { d: '2027-08-15', name: 'Mariä Himmelfahrt' }]);
   const link = (await db.query('select link_basis from urlaub.app')).rows[0].link_basis;
-  assert.equal(link, 'https://urlaub2027.github.io/urlaub/');
+  assert.equal(link, 'https://beispiel.invalid/urlaub/');
 });
 
 test('Alte Links und Abgaben funktionieren weiter', async () => {
@@ -58,8 +60,8 @@ test('Alte Links und Abgaben funktionieren weiter', async () => {
   assert.deepEqual(r.wochen, [12, 30]);
   assert.equal(r.titel, 'Urlaubswünsche 2027');
   assert.deepEqual(r.kalender.filter((k) => k.gesperrt).map((k) => k.kw), [48, 49, 50, 51, 52]);
-  // urlaub.kalender zaehlt Feiertage des Nachbarjahres mit (Controller-Entscheidung)
-  assert.deepEqual(r.kalender.filter((k) => k.arbeitstage === 5).map((k) => k.kw), [1, 12, 13, 17, 18, 20, 21, 44, 51, 52]);
+  // urlaub.kalender zaehlt Feiertage des Nachbarjahres mit (Controller-Entscheidung); KW 32 wegen übernommenem Betriebsruhe-Tag
+  assert.deepEqual(r.kalender.filter((k) => k.arbeitstage === 5).map((k) => k.kw), [1, 12, 13, 17, 18, 20, 21, 32, 44, 51, 52]);
 });
 
 test('aw kann die übernommene Umfrage verwalten', async () => {
@@ -84,4 +86,25 @@ test('Umstellung ohne Admin bricht ab', async () => {
   const leer = await neueDatenbank({ schema: false });
   await leer.exec(SCHEMA_V1);
   await assert.rejects(leer.exec(SCHEMA), /UMSTELLUNG/);
+  await leer.exec('rollback'); // Skript-Transaktion bleibt nach Fehler offen (der SQL-Editor rollt selbst zurück)
+  await nichtUmgestellt(leer);
+});
+
+async function nichtUmgestellt(d) {
+  const e = (await d.query("select to_regclass('urlaub.einstellungen')::text as r")).rows[0].r;
+  assert.notEqual(e, null);
+  const c = (await d.query(`select count(*)::int as n from information_schema.columns
+    where table_schema = 'urlaub' and table_name = 'mitarbeiter' and column_name = 'umfrage_id'`)).rows[0].n;
+  assert.equal(c, 0);
+}
+
+test('Namen nur in Groß-/Kleinschreibung verschieden brechen ab', async () => {
+  const d = await neueDatenbank({ schema: false });
+  await d.exec(SCHEMA_V1);
+  await d.query("insert into auth.users (id, email) values ($1, 'aw@example.com')", [AW]);
+  await d.query("insert into urlaub.admins (user_id, notiz) values ($1, 'aw')", [AW]);
+  await d.query("insert into urlaub.mitarbeiter (name) values ('Anna'), ('anna')");
+  await assert.rejects(d.exec(SCHEMA), /UMSTELLUNG/);
+  await d.exec('rollback');
+  await nichtUmgestellt(d);
 });

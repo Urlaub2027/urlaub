@@ -17,6 +17,8 @@
 --   org_*        angemeldet, nur eigene Umfragen
 --   haupt_*      angemeldet, nur Hauptadmin
 
+begin;
+
 create schema if not exists urlaub;
 revoke all on schema urlaub from public, anon, authenticated;
 
@@ -229,9 +231,17 @@ $$;
 do $$
 declare
   v_umfrage bigint;
+  v_doppelt text;
 begin
   if to_regclass('urlaub.einstellungen') is null then
     return;
+  end if;
+
+  select string_agg(n, ', ') into v_doppelt from (
+    select min(name) as n from urlaub.mitarbeiter
+    group by lower(name) having count(*) > 1) d;
+  if v_doppelt is not null then
+    raise exception 'UMSTELLUNG abgebrochen: Mitarbeiter mit gleichem Namen (nur Groß-/Kleinschreibung verschieden): %. Bitte vorher umbenennen.', v_doppelt;
   end if;
 
   alter table urlaub.mitarbeiter add column if not exists umfrage_id bigint
@@ -965,3 +975,5 @@ grant execute on function public.haupt_sperren(uuid, boolean)      to authentica
 
 revoke all on all tables    in schema urlaub from public, anon, authenticated;
 revoke all on all functions in schema urlaub from public, anon, authenticated;
+
+commit;
