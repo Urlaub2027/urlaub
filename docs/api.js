@@ -40,7 +40,7 @@ export function erneuern(refreshToken) {
 }
 
 export function abmeldenServer(token) {
-  return anfrage('/auth/v1/logout', {}, token);
+  return anfrage('/auth/v1/logout?scope=local', {}, token);
 }
 
 // daten landet in raw_user_meta_data und wird vom Datenbank-Trigger geprüft.

@@ -8,7 +8,7 @@ import { zeitpunkt } from './logik.js';
 import { initUmfrage, zeigeUmfrage } from './admin-umfrage.js';
 
 const ANSICHTEN = ['login', 'registrieren', 'liste', 'umfrage', 'konto', 'organisatoren'];
-const BENUTZERNAME = /^[a-z0-9][a-z0-9.-]{1,29}$/;
+const BENUTZERNAME = /^(?=.{2,30}$)[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 let ich = null;
 let einladungsCode = null;
 
@@ -106,16 +106,23 @@ async function registrierenAbsenden(ereignis) {
   const passwort = $('reg-passwort').value;
   if (!anzeigename) return meldung('Bitte deinen Namen eingeben.');
   if (!BENUTZERNAME.test(name)) {
-    return meldung('Der Benutzername darf nur Kleinbuchstaben, Ziffern, Punkt und Bindestrich enthalten (2–30 Zeichen).');
+    return meldung('Der Benutzername darf nur Kleinbuchstaben, Ziffern, Punkt und Bindestrich enthalten, muss mit Buchstabe oder Ziffer beginnen und enden, darf keine zwei Trenner hintereinander haben (2–30 Zeichen).');
   }
   if (passwort.length < 10) return meldung('Das Passwort muss mindestens 10 Zeichen lang sein.');
   if (passwort !== $('reg-passwort2').value) return meldung('Die beiden Passwörter stimmen nicht überein.');
   $('reg-knopf').disabled = true;
   try {
     await registrieren(sitzung.emailFuer(name), passwort, { einladung: einladungsCode, anzeigename });
-    await sitzung.login(name, passwort);
     window.history.replaceState(null, '', window.location.pathname);
     einladungsCode = null;
+    try {
+      await sitzung.login(name, passwort);
+    } catch {
+      // Konto existiert, Einladung ist verbraucht: nur die Anmeldung muss wiederholt werden.
+      zeigeAnsicht('login');
+      meldung('Registrierung erfolgreich. Bitte melde dich jetzt mit deinem Benutzernamen an.');
+      return;
+    }
     await nachLogin();
   } catch (fehler) {
     meldung(fehler.message === 'user_already_exists' || fehler.message === 'email_exists'

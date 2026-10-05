@@ -34,19 +34,33 @@ export function initUmfrage(kontext) {
 export async function zeigeUmfrage(id) {
   umfrageId = id;
   daten = null;
+  for (const k of ['u-titel', 'kennzahl', 'frist-anzeige']) $(k).textContent = '';
+  $('personen').replaceChildren();
+  $('wochen').replaceChildren();
   zeigeReiter('personen');
   await laden();
 }
 
 async function laden() {
+  const angefragt = umfrageId;
+  let antwort;
   try {
-    daten = await ctx.aufruf('org_umfrage', { p_umfrage_id: umfrageId });
+    antwort = await ctx.aufruf('org_umfrage', { p_umfrage_id: angefragt });
   } catch (fehler) {
+    if (angefragt !== umfrageId) return;
     ctx.fehlerAnzeigen(fehler);
     if (fehler.message === 'UMFRAGE_NICHT_GEFUNDEN') ctx.zurueck();
     return;
   }
+  if (angefragt !== umfrageId) return; // veraltete Antwort einer früheren Umfrage
+  daten = antwort;
   zeichne();
+}
+
+// Die geladenen Daten gehören zur aktuell geöffneten Umfrage.
+function datenPasst() {
+  const id = daten?.einstellungen?.id;
+  return Boolean(daten) && (id === undefined || Number(id) === Number(umfrageId));
 }
 
 async function aktion(funktion, parameter, danach = null) {
@@ -171,6 +185,7 @@ async function mitarbeiterAnlegen(ereignis) {
 
 async function einstellungenSpeichern(ereignis) {
   ereignis.preventDefault();
+  if (!datenPasst()) return;
   const e = daten.einstellungen;
   const p = {
     titel: $('e-titel').value,
@@ -204,6 +219,7 @@ async function freienTagHinzufuegen(ereignis) {
 }
 
 async function umfrageLoeschen() {
+  if (!datenPasst()) return;
   const titel = daten?.einstellungen.titel || '';
   if (!window.confirm(`„${titel}“ mit allen Mitarbeitern und Abgaben endgültig löschen?\n\nAlle Links dieser Umfrage funktionieren danach nicht mehr.`)) return;
   meldung('');
@@ -216,7 +232,7 @@ async function umfrageLoeschen() {
 }
 
 function excelHerunterladen() {
-  if (!daten) return;
+  if (!datenPasst()) return;
   const blob = new Blob([erzeugeXlsx(excelBlaetter(daten))],
     { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const heute = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
