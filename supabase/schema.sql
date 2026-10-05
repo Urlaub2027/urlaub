@@ -995,15 +995,28 @@ begin
     'freie_tage', coalesce((
       select jsonb_agg(jsonb_build_object('datum', f.datum, 'name', f.name) order by f.datum)
       from urlaub.freie_tage f where f.umfrage_id = v_u.id), '[]'::jsonb),
+    'fragen', coalesce((
+      select jsonb_agg(urlaub.frage_json(f, true) order by f.position, f.id)
+      from urlaub.fragen f where f.umfrage_id = v_u.id), '[]'::jsonb),
+    -- verstoesse: gespeicherte Antworten gegen die heutigen Fragen und Regeln geprüft
+    -- (z. B. nach einer nachträglich verschärften Regel); ohne Abgabe leer.
     'mitarbeiter', coalesce((
       select jsonb_agg(jsonb_build_object(
-               'id',           m.id,
-               'name',         m.name,
-               'link',         v_basis || '#' || m.code,
-               'geaendert_am', a.geaendert_am) order by m.name)
-      from urlaub.mitarbeiter m
-      left join urlaub.abgaben a on a.mitarbeiter_id = m.id
-      where m.umfrage_id = v_u.id), '[]'::jsonb));
+               'id',           x.id,
+               'name',         x.name,
+               'link',         v_basis || '#' || x.code,
+               'geaendert_am', x.geaendert_am,
+               'antworten',    x.antworten,
+               'verstoesse',   case when x.geaendert_am is null then '{}'::jsonb
+                                    else urlaub.pruefe_antworten(v_u.id, x.antworten) -> 'fehler' end)
+             order by x.name)
+      from (select m.id, m.name, m.code, a.geaendert_am,
+                   coalesce((select jsonb_object_agg(an.frage_id::text, an.wert)
+                             from urlaub.antworten an where an.mitarbeiter_id = m.id), '{}'::jsonb) as antworten
+            from urlaub.mitarbeiter m
+            left join urlaub.abgaben a on a.mitarbeiter_id = m.id
+            where m.umfrage_id = v_u.id) x), '[]'::jsonb),
+    'kalender', urlaub.kalender_json(v_u.id));
 end;
 $$;
 
@@ -1145,6 +1158,740 @@ grant execute on function public.org_freien_tag_entfernen(bigint, date)         
 grant execute on function public.org_mitarbeiter_anlegen(bigint, text)          to authenticated;
 grant execute on function public.org_mitarbeiter_loeschen(bigint)               to authenticated;
 grant execute on function public.org_link_erneuern(bigint)                      to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Fragen-Editor (Organisatoren)
+-- ---------------------------------------------------------------------------
+--
+-- Gemeinsame Regeln: Besitz wird im declare-Block geprüft (fremde und nicht
+-- vorhandene Objekte sind nicht unterscheidbar). Strukturänderungen sperren die
+-- Umfrage-Zeile (for update), damit gleichzeitige Änderungen an Reihenfolge,
+-- Bedingungen und Löschungen einander nicht überholen.
+-- Die Schutz-Fremdschlüssel (antworten.frage_id, antwort_optionen.option_id,
+-- bedingungen.quelle_id) sind aufgeschoben und greifen erst beim Commit; darum
+-- prüfen die Löschfunktionen HAT_ANTWORTEN und BEDINGUNG_VERWEIST vorher selbst.
+
+create or replace function urlaub.eigene_frage(p_frage_id bigint)
+returns urlaub.fragen
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (urlaub.ich()).user_id;
+  v_f   urlaub.fragen;
+begin
+  select f.* into v_f
+  from urlaub.fragen f join urlaub.umfragen u on u.id = f.umfrage_id
+  where f.id = p_frage_id and u.organisator_id = v_uid;
+  if not found then
+    raise exception 'FRAGE_NICHT_GEFUNDEN';
+  end if;
+  return v_f;
+end;
+$$;
+
+create or replace function urlaub.eigene_option(p_option_id bigint)
+returns urlaub.optionen
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (urlaub.ich()).user_id;
+  v_o   urlaub.optionen;
+begin
+  select o.* into v_o
+  from urlaub.optionen o
+  join urlaub.fragen f on f.id = o.frage_id
+  join urlaub.umfragen u on u.id = f.umfrage_id
+  where o.id = p_option_id and u.organisator_id = v_uid;
+  if not found then
+    raise exception 'OPTION_NICHT_GEFUNDEN';
+  end if;
+  return v_o;
+end;
+$$;
+
+create or replace function urlaub.eigene_bedingung(p_bedingung_id bigint)
+returns urlaub.bedingungen
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (urlaub.ich()).user_id;
+  v_b   urlaub.bedingungen;
+begin
+  select b.* into v_b
+  from urlaub.bedingungen b
+  join urlaub.fragen f on f.id = b.frage_id
+  join urlaub.umfragen u on u.id = f.umfrage_id
+  where b.id = p_bedingung_id and u.organisator_id = v_uid;
+  if not found then
+    raise exception 'BEDINGUNG_NICHT_GEFUNDEN';
+  end if;
+  return v_b;
+end;
+$$;
+
+-- Regel-Arten je Fragetyp; unbekannter Typ: keine.
+create or replace function urlaub.erlaubte_regeln(p_typ text)
+returns text[]
+language sql immutable
+set search_path = ''
+as $$
+  select case p_typ
+    when 'urlaubswochen' then array['pflicht', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage',
+                                    'gesperrte_monate']
+    when 'einfach'       then array['pflicht']
+    when 'janein'        then array['pflicht']
+    when 'skala'         then array['pflicht']
+    when 'mehrfach'      then array['pflicht', 'min_anzahl', 'max_anzahl']
+    when 'text_kurz'     then array['pflicht', 'max_zeichen']
+    when 'text_lang'     then array['pflicht', 'max_zeichen']
+    when 'zahl'          then array['pflicht', 'min_zahl', 'max_zahl']
+    when 'datum'         then array['pflicht', 'fruehestens', 'spaetestens']
+    else '{}'::text[]
+  end
+$$;
+
+-- Nummeriert die Fragen einer Umfrage lückenlos 1…n (Reihenfolge position, id).
+create or replace function urlaub.positionen_neu(p_umfrage_id bigint)
+returns void
+language sql volatile
+set search_path = ''
+as $$
+  update urlaub.fragen f set position = x.n
+  from (select id, row_number() over (order by position, id)::int as n
+        from urlaub.fragen where umfrage_id = p_umfrage_id) x
+  where f.id = x.id and f.position <> x.n
+$$;
+
+create or replace function urlaub.optionen_positionen_neu(p_frage_id bigint)
+returns void
+language sql volatile
+set search_path = ''
+as $$
+  update urlaub.optionen o set position = x.n
+  from (select id, row_number() over (order by position, id)::int as n
+        from urlaub.optionen where frage_id = p_frage_id) x
+  where o.id = x.id and o.position <> x.n
+$$;
+
+-- Gespeicherte Form eines Regelwerts, sonst UNGUELTIGE_EINSTELLUNG. Streng, weil
+-- antwort_verstoss/wochen_verstoss/kalender die Werte ohne Schutz umwandeln
+-- (::int, ::numeric, ::date). Ganze Zahlen bleiben im int-Bereich.
+create or replace function urlaub.regelwert(p_art text, p_wert jsonb)
+returns jsonb
+language plpgsql immutable
+set search_path = ''
+as $$
+declare
+  v_zahl  numeric;
+  v_datum date;
+begin
+  if p_art = 'pflicht' then
+    return 'null'::jsonb;
+  end if;
+  if p_art in ('min_anzahl', 'max_anzahl', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage',
+               'max_zeichen') then
+    if jsonb_typeof(p_wert) is distinct from 'number' then
+      raise exception 'UNGUELTIGE_EINSTELLUNG';
+    end if;
+    v_zahl := (p_wert #>> '{}')::numeric;
+    if v_zahl <> trunc(v_zahl) or v_zahl < (case p_art when 'max_zeichen' then 1 else 0 end)
+       or v_zahl > 2147483647 then
+      raise exception 'UNGUELTIGE_EINSTELLUNG';
+    end if;
+    return to_jsonb(v_zahl::int);
+  end if;
+  if p_art in ('min_zahl', 'max_zahl') then
+    if jsonb_typeof(p_wert) is distinct from 'number' then
+      raise exception 'UNGUELTIGE_EINSTELLUNG';
+    end if;
+    return to_jsonb((p_wert #>> '{}')::numeric);
+  end if;
+  if p_art in ('fruehestens', 'spaetestens') then
+    if jsonb_typeof(p_wert) is distinct from 'string' or (p_wert #>> '{}') !~ '^\d{4}-\d{2}-\d{2}$' then
+      raise exception 'UNGUELTIGE_EINSTELLUNG';
+    end if;
+    begin
+      v_datum := (p_wert #>> '{}')::date;
+    exception when data_exception then
+      raise exception 'UNGUELTIGE_EINSTELLUNG';
+    end;
+    return to_jsonb(to_char(v_datum, 'YYYY-MM-DD'));
+  end if;
+  if p_art = 'gesperrte_monate' then
+    if jsonb_typeof(p_wert) is distinct from 'array'
+       or exists (select 1 from jsonb_array_elements(p_wert) e
+                  where jsonb_typeof(e) <> 'number'
+                     or (e #>> '{}')::numeric <> trunc((e #>> '{}')::numeric)
+                     or (e #>> '{}')::numeric not between 1 and 12) then
+      raise exception 'UNGUELTIGE_EINSTELLUNG';
+    end if;
+    return coalesce((select jsonb_agg(m order by m)
+                     from (select distinct ((e #>> '{}')::numeric)::int as m from jsonb_array_elements(p_wert) e) s),
+                    '[]'::jsonb);
+  end if;
+  raise exception 'UNGUELTIGE_EINSTELLUNG';
+end;
+$$;
+
+-- Gespeicherte Form der Werte einer Bedingung, sonst BEDINGUNG_UNGUELTIG.
+-- Quelle: andere Frage derselben Umfrage, die vor dem Ziel steht; Operator und
+-- Werte passend zum Quelltyp. Options-IDs werden sortiert und ohne Doppelte gespeichert.
+create or replace function urlaub.bedingung_werte(p_ziel urlaub.fragen, p_quelle_id bigint, p_operator text, p_werte jsonb)
+returns jsonb
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_q urlaub.fragen;
+begin
+  select * into v_q from urlaub.fragen
+  where id = p_quelle_id and umfrage_id = p_ziel.umfrage_id and id <> p_ziel.id
+    and (position, id) < (p_ziel.position, p_ziel.id);
+  if not found then
+    raise exception 'BEDINGUNG_UNGUELTIG';
+  end if;
+  if (v_q.typ = 'einfach' and p_operator in ('ist_eine_von', 'ist_keine_von'))
+     or (v_q.typ = 'mehrfach' and p_operator in ('enthaelt_eine_von', 'enthaelt_keine_von')) then
+    if jsonb_typeof(p_werte) is distinct from 'array' or jsonb_array_length(p_werte) = 0
+       or exists (select 1 from jsonb_array_elements(p_werte) e
+                  where jsonb_typeof(e) <> 'number'
+                     or not exists (select 1 from urlaub.optionen o
+                                    where o.frage_id = v_q.id and o.id::numeric = (e #>> '{}')::numeric)) then
+      raise exception 'BEDINGUNG_UNGUELTIG';
+    end if;
+    return (select jsonb_agg(i order by i)
+            from (select distinct ((e #>> '{}')::numeric)::bigint as i from jsonb_array_elements(p_werte) e) s);
+  end if;
+  if v_q.typ = 'janein' and p_operator = 'ist' and jsonb_typeof(p_werte) = 'boolean' then
+    return p_werte;
+  end if;
+  if v_q.typ in ('skala', 'zahl') and p_operator in ('gleich', 'groesser', 'kleiner')
+     and jsonb_typeof(p_werte) = 'number' then
+    return p_werte;
+  end if;
+  raise exception 'BEDINGUNG_UNGUELTIG';
+end;
+$$;
+
+-- Neue Frage am Ende. Vorgaben: Text "Neue Frage" (Hinweis: "Hinweis"), bei Auswahl
+-- zwei Antwortmöglichkeiten, Skala 1–5; Urlaubswochen mit den Standard-Regeln für das
+-- Jahr nach der Frist (höchstens eine je Umfrage).
+create or replace function public.org_frage_anlegen(p_umfrage_id bigint, p_typ text)
+returns bigint
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_u  urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+  v_id bigint;
+begin
+  if p_typ is null or p_typ not in ('urlaubswochen', 'einfach', 'mehrfach', 'janein', 'skala',
+                                    'text_kurz', 'text_lang', 'zahl', 'datum', 'hinweis') then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
+  perform 1 from urlaub.umfragen where id = v_u.id for update;
+  if p_typ = 'urlaubswochen' then
+    if exists (select 1 from urlaub.fragen where umfrage_id = v_u.id and typ = 'urlaubswochen') then
+      raise exception 'URLAUBSWOCHEN_DOPPELT';
+    end if;
+    begin
+      v_id := urlaub.standard_urlaubsfrage(
+                v_u.id, extract(year from v_u.frist at time zone 'Europe/Berlin')::int + 1, 'BY');
+    exception when check_violation or not_null_violation or data_exception then
+      raise exception 'UNGUELTIGE_EINSTELLUNG';
+    end;
+    return v_id;
+  end if;
+  insert into urlaub.fragen (umfrage_id, position, typ, text, skala_von, skala_bis)
+  values (v_u.id,
+          coalesce((select max(position) from urlaub.fragen where umfrage_id = v_u.id), 0) + 1,
+          p_typ,
+          case when p_typ = 'hinweis' then 'Hinweis' else 'Neue Frage' end,
+          case when p_typ = 'skala' then 1 end,
+          case when p_typ = 'skala' then 5 end)
+  returning id into v_id;
+  if p_typ in ('einfach', 'mehrfach') then
+    insert into urlaub.optionen (frage_id, position, text) values (v_id, 1, 'Antwort 1'), (v_id, 2, 'Antwort 2');
+  end if;
+  return v_id;
+end;
+$$;
+
+-- Alle Schlüssel optional; Felder eines anderen Typs (z. B. jahr bei einer Skala) werden ignoriert.
+-- Die Besitzprüfung (declare-Block) liegt außerhalb der inneren exception-Blöcke.
+create or replace function public.org_frage_speichern(p_frage_id bigint, p_daten jsonb)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_f       urlaub.fragen := urlaub.eigene_frage(p_frage_id);
+  v_neu     urlaub.fragen;
+  v_u       urlaub.umfragen;
+  v_antwort boolean;
+begin
+  if jsonb_typeof(p_daten) is distinct from 'object' then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
+  select * into v_u from urlaub.umfragen where id = v_f.umfrage_id for update;
+  v_antwort := exists (select 1 from urlaub.antworten where frage_id = v_f.id);
+  v_neu := v_f;
+
+  -- Texte
+  if p_daten ? 'text' then
+    v_neu.text := urlaub.trim_alles(p_daten ->> 'text');
+    if v_neu.text is null or v_neu.text = '' then
+      raise exception 'FRAGETEXT_LEER';
+    end if;
+  end if;
+  if p_daten ? 'hilfetext' then
+    v_neu.hilfetext := coalesce(urlaub.trim_alles(p_daten ->> 'hilfetext'), '');
+  end if;
+  if p_daten ? 'verknuepfung' then
+    v_neu.verknuepfung := p_daten ->> 'verknuepfung';
+  end if;
+
+  -- Typwechsel
+  if p_daten ? 'typ' and (p_daten ->> 'typ') is distinct from v_f.typ then
+    v_neu.typ := p_daten ->> 'typ';
+    if v_neu.typ is null or v_neu.typ = 'urlaubswochen' or v_f.typ = 'urlaubswochen'
+       or v_neu.typ not in ('einfach', 'mehrfach', 'janein', 'skala', 'text_kurz', 'text_lang', 'zahl', 'datum',
+                            'hinweis') then
+      raise exception 'UNGUELTIGE_EINSTELLUNG';
+    end if;
+    if v_antwort then
+      raise exception 'TYP_GESPERRT';
+    end if;
+    if exists (select 1 from urlaub.bedingungen where quelle_id = v_f.id) then
+      raise exception 'BEDINGUNG_VERWEIST';
+    end if;
+    if v_neu.typ = 'skala' then
+      v_neu.skala_von := 1; v_neu.skala_bis := 5; v_neu.skala_links := null; v_neu.skala_rechts := null;
+    else
+      v_neu.skala_von := null; v_neu.skala_bis := null; v_neu.skala_links := null; v_neu.skala_rechts := null;
+    end if;
+  end if;
+
+  -- Typ-Einstellungen; Umwandlungsfehler (z. B. "abc" als Zahl) werden UNGUELTIGE_EINSTELLUNG.
+  begin
+    if v_neu.typ = 'skala' then
+      if p_daten ? 'skala_von' then v_neu.skala_von := (p_daten ->> 'skala_von')::int; end if;
+      if p_daten ? 'skala_bis' then v_neu.skala_bis := (p_daten ->> 'skala_bis')::int; end if;
+      if p_daten ? 'skala_links' then v_neu.skala_links := nullif(urlaub.trim_alles(p_daten ->> 'skala_links'), ''); end if;
+      if p_daten ? 'skala_rechts' then v_neu.skala_rechts := nullif(urlaub.trim_alles(p_daten ->> 'skala_rechts'), ''); end if;
+    end if;
+    if v_neu.typ = 'urlaubswochen' then
+      if p_daten ? 'jahr' then v_neu.jahr := (p_daten ->> 'jahr')::int; end if;
+      if p_daten ? 'bundesland' then v_neu.bundesland := p_daten ->> 'bundesland'; end if;
+      if p_daten ? 'arbeitstage_pro_woche' then
+        v_neu.arbeitstage_pro_woche := (p_daten ->> 'arbeitstage_pro_woche')::int;
+      end if;
+      if p_daten ? 'sperr_hinweis' then v_neu.sperr_hinweis := urlaub.trim_alles(p_daten ->> 'sperr_hinweis'); end if;
+    end if;
+  exception when data_exception then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end;
+  if v_antwort and (v_neu.jahr, v_neu.bundesland, v_neu.arbeitstage_pro_woche, v_neu.skala_von, v_neu.skala_bis)
+                   is distinct from (v_f.jahr, v_f.bundesland, v_f.arbeitstage_pro_woche, v_f.skala_von, v_f.skala_bis) then
+    raise exception 'GRUNDDATEN_GESPERRT';
+  end if;
+
+  begin
+    update urlaub.fragen set
+      text = v_neu.text, hilfetext = v_neu.hilfetext, verknuepfung = v_neu.verknuepfung, typ = v_neu.typ,
+      skala_von = v_neu.skala_von, skala_bis = v_neu.skala_bis,
+      skala_links = v_neu.skala_links, skala_rechts = v_neu.skala_rechts,
+      jahr = v_neu.jahr, bundesland = v_neu.bundesland, arbeitstage_pro_woche = v_neu.arbeitstage_pro_woche,
+      sperr_hinweis = v_neu.sperr_hinweis
+    where id = v_f.id;
+    -- Frist auf dem Standard des alten Jahres (30.11. des Vorjahres) zieht mit.
+    if v_neu.jahr is distinct from v_f.jahr and v_f.jahr is not null
+       and v_u.frist = make_timestamp(v_f.jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin' then
+      update urlaub.umfragen
+      set frist = make_timestamp(v_neu.jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin'
+      where id = v_u.id;
+    end if;
+  exception when check_violation or not_null_violation or data_exception then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end;
+
+  if v_neu.typ is distinct from v_f.typ then
+    delete from urlaub.regeln where frage_id = v_f.id and not (art = any (urlaub.erlaubte_regeln(v_neu.typ)));
+    if v_neu.typ in ('einfach', 'mehrfach') then
+      if not exists (select 1 from urlaub.optionen where frage_id = v_f.id) then
+        insert into urlaub.optionen (frage_id, position, text)
+        values (v_f.id, 1, 'Antwort 1'), (v_f.id, 2, 'Antwort 2');
+      end if;
+    else
+      delete from urlaub.optionen where frage_id = v_f.id;
+    end if;
+  end if;
+end;
+$$;
+
+create or replace function public.org_frage_schalten(p_frage_id bigint, p_aktiv boolean)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_f urlaub.fragen := urlaub.eigene_frage(p_frage_id);
+begin
+  update urlaub.fragen set aktiv = coalesce(p_aktiv, aktiv) where id = v_f.id;
+end;
+$$;
+
+-- Tauscht mit der Nachbarfrage (−1 nach oben, +1 nach unten); am Rand passiert nichts.
+-- Danach muss jede Bedingung (auch ausgeschaltete) ihre Quelle weiterhin vor dem Ziel haben.
+create or replace function public.org_frage_verschieben(p_frage_id bigint, p_richtung int)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_f       urlaub.fragen := urlaub.eigene_frage(p_frage_id);
+  v_pos     int;
+  v_nachbar bigint;
+begin
+  if p_richtung is null or p_richtung not in (-1, 1) then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
+  perform 1 from urlaub.umfragen where id = v_f.umfrage_id for update;
+  perform urlaub.positionen_neu(v_f.umfrage_id);
+  select position into v_pos from urlaub.fragen where id = v_f.id;
+  select id into v_nachbar from urlaub.fragen where umfrage_id = v_f.umfrage_id and position = v_pos + p_richtung;
+  if v_nachbar is null then
+    return;
+  end if;
+  update urlaub.fragen set position = case id when v_f.id then v_pos + p_richtung else v_pos end
+  where id in (v_f.id, v_nachbar);
+  if exists (select 1 from urlaub.bedingungen b
+             join urlaub.fragen z on z.id = b.frage_id
+             join urlaub.fragen q on q.id = b.quelle_id
+             where (b.frage_id in (v_f.id, v_nachbar) or b.quelle_id in (v_f.id, v_nachbar))
+               and q.position >= z.position) then
+    raise exception 'REIHENFOLGE_BEDINGUNG';
+  end if;
+end;
+$$;
+
+create or replace function public.org_frage_loeschen(p_frage_id bigint)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_f urlaub.fragen := urlaub.eigene_frage(p_frage_id);
+begin
+  perform 1 from urlaub.umfragen where id = v_f.umfrage_id for update;
+  if exists (select 1 from urlaub.antworten where frage_id = v_f.id) then
+    raise exception 'HAT_ANTWORTEN';
+  end if;
+  if exists (select 1 from urlaub.bedingungen where quelle_id = v_f.id) then
+    raise exception 'BEDINGUNG_VERWEIST';
+  end if;
+  delete from urlaub.fragen where id = v_f.id;  -- Optionen, Regeln, eigene Bedingungen werden mitgelöscht
+  perform urlaub.positionen_neu(v_f.umfrage_id);
+end;
+$$;
+
+create or replace function public.org_option_anlegen(p_frage_id bigint, p_text text)
+returns bigint
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_f    urlaub.fragen := urlaub.eigene_frage(p_frage_id);
+  v_text text := urlaub.trim_alles(p_text);
+  v_id   bigint;
+begin
+  if v_f.typ not in ('einfach', 'mehrfach') then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
+  if v_text is null or v_text = '' then
+    raise exception 'FRAGETEXT_LEER';
+  end if;
+  perform 1 from urlaub.fragen where id = v_f.id for update;
+  insert into urlaub.optionen (frage_id, position, text)
+  values (v_f.id, coalesce((select max(position) from urlaub.optionen where frage_id = v_f.id), 0) + 1, v_text)
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+
+create or replace function public.org_option_speichern(p_option_id bigint, p_text text)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_o    urlaub.optionen := urlaub.eigene_option(p_option_id);
+  v_text text := urlaub.trim_alles(p_text);
+begin
+  if v_text is null or v_text = '' then
+    raise exception 'FRAGETEXT_LEER';
+  end if;
+  update urlaub.optionen set text = v_text where id = v_o.id;
+end;
+$$;
+
+create or replace function public.org_option_schalten(p_option_id bigint, p_aktiv boolean)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_o urlaub.optionen := urlaub.eigene_option(p_option_id);
+begin
+  update urlaub.optionen set aktiv = coalesce(p_aktiv, aktiv) where id = v_o.id;
+end;
+$$;
+
+create or replace function public.org_option_verschieben(p_option_id bigint, p_richtung int)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_o       urlaub.optionen := urlaub.eigene_option(p_option_id);
+  v_pos     int;
+  v_nachbar bigint;
+begin
+  if p_richtung is null or p_richtung not in (-1, 1) then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
+  perform 1 from urlaub.fragen where id = v_o.frage_id for update;
+  perform urlaub.optionen_positionen_neu(v_o.frage_id);
+  select position into v_pos from urlaub.optionen where id = v_o.id;
+  select id into v_nachbar from urlaub.optionen where frage_id = v_o.frage_id and position = v_pos + p_richtung;
+  if v_nachbar is null then
+    return;
+  end if;
+  update urlaub.optionen set position = case id when v_o.id then v_pos + p_richtung else v_pos end
+  where id in (v_o.id, v_nachbar);
+end;
+$$;
+
+create or replace function public.org_option_loeschen(p_option_id bigint)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_o urlaub.optionen := urlaub.eigene_option(p_option_id);
+begin
+  perform 1 from urlaub.umfragen u join urlaub.fragen f on f.umfrage_id = u.id where f.id = v_o.frage_id
+  for update of u;
+  if exists (select 1 from urlaub.antwort_optionen where option_id = v_o.id) then
+    raise exception 'HAT_ANTWORTEN';
+  end if;
+  if exists (select 1 from urlaub.bedingungen
+             where quelle_id = v_o.frage_id and jsonb_typeof(werte) = 'array'
+               and werte @> jsonb_build_array(v_o.id)) then
+    raise exception 'BEDINGUNG_VERWEIST';
+  end if;
+  delete from urlaub.optionen where id = v_o.id;
+end;
+$$;
+
+-- Legt die Regel an oder ändert Wert und Schalter. pflicht speichert immer null.
+create or replace function public.org_regel_setzen(p_frage_id bigint, p_art text, p_wert jsonb, p_aktiv boolean)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_f    urlaub.fragen := urlaub.eigene_frage(p_frage_id);
+  v_wert jsonb;
+begin
+  if p_art is null or not (p_art = any (urlaub.erlaubte_regeln(v_f.typ))) then
+    raise exception 'REGEL_UNPASSEND';
+  end if;
+  v_wert := urlaub.regelwert(p_art, p_wert);
+  insert into urlaub.regeln (frage_id, art, wert, aktiv)
+  values (v_f.id, p_art, v_wert, coalesce(p_aktiv, true))
+  on conflict (frage_id, art) do update set wert = excluded.wert, aktiv = coalesce(p_aktiv, urlaub.regeln.aktiv);
+end;
+$$;
+
+create or replace function public.org_bedingung_anlegen(p_frage_id bigint, p_quelle_id bigint, p_operator text, p_werte jsonb)
+returns bigint
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_f     urlaub.fragen := urlaub.eigene_frage(p_frage_id);
+  v_werte jsonb;
+  v_id    bigint;
+begin
+  perform 1 from urlaub.umfragen where id = v_f.umfrage_id for update;
+  select * into v_f from urlaub.fragen where id = v_f.id;  -- Position nach der Sperre
+  v_werte := urlaub.bedingung_werte(v_f, p_quelle_id, p_operator, p_werte);
+  insert into urlaub.bedingungen (frage_id, quelle_id, operator, werte)
+  values (v_f.id, p_quelle_id, p_operator, v_werte)
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+
+create or replace function public.org_bedingung_speichern(p_bedingung_id bigint, p_operator text, p_werte jsonb)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_b     urlaub.bedingungen := urlaub.eigene_bedingung(p_bedingung_id);
+  v_f     urlaub.fragen;
+  v_werte jsonb;
+begin
+  perform 1 from urlaub.umfragen u join urlaub.fragen f on f.umfrage_id = u.id where f.id = v_b.frage_id
+  for update of u;
+  select * into v_f from urlaub.fragen where id = v_b.frage_id;
+  v_werte := urlaub.bedingung_werte(v_f, v_b.quelle_id, p_operator, p_werte);
+  update urlaub.bedingungen set operator = p_operator, werte = v_werte where id = v_b.id;
+end;
+$$;
+
+create or replace function public.org_bedingung_schalten(p_bedingung_id bigint, p_aktiv boolean)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_b urlaub.bedingungen := urlaub.eigene_bedingung(p_bedingung_id);
+begin
+  update urlaub.bedingungen set aktiv = coalesce(p_aktiv, aktiv) where id = v_b.id;
+end;
+$$;
+
+create or replace function public.org_bedingung_loeschen(p_bedingung_id bigint)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_b urlaub.bedingungen := urlaub.eigene_bedingung(p_bedingung_id);
+begin
+  delete from urlaub.bedingungen where id = v_b.id;
+end;
+$$;
+
+-- Kopie mit allen Fragen, Optionen, Regeln, Bedingungen (Schalter wie im Original)
+-- und freien Tagen; ohne Mitarbeiter und Antworten. IDs werden über Zuordnungen
+-- alt → neu umgeschlüsselt, auch die Options-IDs in den Bedingungswerten.
+create or replace function public.org_umfrage_kopieren(p_umfrage_id bigint)
+returns bigint
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_u        urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+  v_id       bigint;
+  v_neu      bigint;
+  v_neue_opt bigint;
+  v_fragen   jsonb := '{}';  -- alte Frage-ID → neue
+  v_optionen jsonb := '{}';  -- alte Options-ID → neue
+  v_f        urlaub.fragen;
+  v_o        urlaub.optionen;
+begin
+  insert into urlaub.umfragen (organisator_id, titel, frist)
+  values (v_u.organisator_id, 'Kopie von ' || v_u.titel, v_u.frist)
+  returning id into v_id;
+  for v_f in select * from urlaub.fragen where umfrage_id = v_u.id order by position, id loop
+    insert into urlaub.fragen (umfrage_id, position, typ, text, hilfetext, aktiv, verknuepfung, jahr, bundesland,
+                               arbeitstage_pro_woche, sperr_hinweis, skala_von, skala_bis, skala_links, skala_rechts)
+    values (v_id, v_f.position, v_f.typ, v_f.text, v_f.hilfetext, v_f.aktiv, v_f.verknuepfung, v_f.jahr,
+            v_f.bundesland, v_f.arbeitstage_pro_woche, v_f.sperr_hinweis, v_f.skala_von, v_f.skala_bis,
+            v_f.skala_links, v_f.skala_rechts)
+    returning id into v_neu;
+    v_fragen := v_fragen || jsonb_build_object(v_f.id::text, v_neu);
+    for v_o in select * from urlaub.optionen where frage_id = v_f.id order by position, id loop
+      insert into urlaub.optionen (frage_id, position, text, aktiv)
+      values (v_neu, v_o.position, v_o.text, v_o.aktiv)
+      returning id into v_neue_opt;
+      v_optionen := v_optionen || jsonb_build_object(v_o.id::text, v_neue_opt);
+    end loop;
+  end loop;
+
+  insert into urlaub.regeln (frage_id, art, wert, aktiv)
+  select (v_fragen ->> r.frage_id::text)::bigint, r.art, r.wert, r.aktiv
+  from urlaub.regeln r join urlaub.fragen f on f.id = r.frage_id
+  where f.umfrage_id = v_u.id;
+
+  -- Options-IDs in den Werten nur bei Auswahl-Quellen; andere Werte (true, 2.5) bleiben.
+  insert into urlaub.bedingungen (frage_id, quelle_id, operator, werte, aktiv)
+  select (v_fragen ->> b.frage_id::text)::bigint,
+         (v_fragen ->> b.quelle_id::text)::bigint,
+         b.operator,
+         case when q.typ in ('einfach', 'mehrfach') and jsonb_typeof(b.werte) = 'array'
+              then (select coalesce(jsonb_agg(v_optionen -> (e #>> '{}') order by (v_optionen ->> (e #>> '{}'))::bigint),
+                                    '[]'::jsonb)
+                    from jsonb_array_elements(b.werte) e where v_optionen ? (e #>> '{}'))
+              else b.werte end,
+         b.aktiv
+  from urlaub.bedingungen b
+  join urlaub.fragen z on z.id = b.frage_id
+  join urlaub.fragen q on q.id = b.quelle_id
+  where z.umfrage_id = v_u.id
+  order by b.id;
+
+  insert into urlaub.freie_tage (umfrage_id, datum, name)
+  select v_id, datum, name from urlaub.freie_tage where umfrage_id = v_u.id;
+  return v_id;
+end;
+$$;
+
+revoke all on function public.org_frage_anlegen(bigint, text)                    from public, anon, authenticated;
+revoke all on function public.org_frage_speichern(bigint, jsonb)                 from public, anon, authenticated;
+revoke all on function public.org_frage_schalten(bigint, boolean)                from public, anon, authenticated;
+revoke all on function public.org_frage_verschieben(bigint, int)                 from public, anon, authenticated;
+revoke all on function public.org_frage_loeschen(bigint)                         from public, anon, authenticated;
+revoke all on function public.org_option_anlegen(bigint, text)                   from public, anon, authenticated;
+revoke all on function public.org_option_speichern(bigint, text)                 from public, anon, authenticated;
+revoke all on function public.org_option_schalten(bigint, boolean)               from public, anon, authenticated;
+revoke all on function public.org_option_verschieben(bigint, int)                from public, anon, authenticated;
+revoke all on function public.org_option_loeschen(bigint)                        from public, anon, authenticated;
+revoke all on function public.org_regel_setzen(bigint, text, jsonb, boolean)     from public, anon, authenticated;
+revoke all on function public.org_bedingung_anlegen(bigint, bigint, text, jsonb) from public, anon, authenticated;
+revoke all on function public.org_bedingung_speichern(bigint, text, jsonb)       from public, anon, authenticated;
+revoke all on function public.org_bedingung_schalten(bigint, boolean)            from public, anon, authenticated;
+revoke all on function public.org_bedingung_loeschen(bigint)                     from public, anon, authenticated;
+revoke all on function public.org_umfrage_kopieren(bigint)                       from public, anon, authenticated;
+grant execute on function public.org_frage_anlegen(bigint, text)                    to authenticated;
+grant execute on function public.org_frage_speichern(bigint, jsonb)                 to authenticated;
+grant execute on function public.org_frage_schalten(bigint, boolean)                to authenticated;
+grant execute on function public.org_frage_verschieben(bigint, int)                 to authenticated;
+grant execute on function public.org_frage_loeschen(bigint)                         to authenticated;
+grant execute on function public.org_option_anlegen(bigint, text)                   to authenticated;
+grant execute on function public.org_option_speichern(bigint, text)                 to authenticated;
+grant execute on function public.org_option_schalten(bigint, boolean)               to authenticated;
+grant execute on function public.org_option_verschieben(bigint, int)                to authenticated;
+grant execute on function public.org_option_loeschen(bigint)                        to authenticated;
+grant execute on function public.org_regel_setzen(bigint, text, jsonb, boolean)     to authenticated;
+grant execute on function public.org_bedingung_anlegen(bigint, bigint, text, jsonb) to authenticated;
+grant execute on function public.org_bedingung_speichern(bigint, text, jsonb)       to authenticated;
+grant execute on function public.org_bedingung_schalten(bigint, boolean)            to authenticated;
+grant execute on function public.org_bedingung_loeschen(bigint)                     to authenticated;
+grant execute on function public.org_umfrage_kopieren(bigint)                       to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Einladungen und Registrierung
