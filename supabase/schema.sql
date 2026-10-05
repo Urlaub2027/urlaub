@@ -728,8 +728,177 @@ grant execute on function public.org_mitarbeiter_loeschen(bigint)               
 grant execute on function public.org_link_erneuern(bigint)                      to authenticated;
 
 -- ---------------------------------------------------------------------------
--- (Task 4 fügt hier Einladungen und Hauptadmin-Funktionen ein)
+-- Einladungen und Registrierung
 -- ---------------------------------------------------------------------------
+
+-- Gültig: vorhanden, nicht eingelöst, nicht abgelaufen, Einladender nicht gesperrt.
+create or replace function urlaub.einladung_gueltig(p_code text)
+returns urlaub.einladungen
+language sql stable
+set search_path = ''
+as $$
+  select e.* from urlaub.einladungen e
+  left join urlaub.organisatoren o on o.user_id = e.erstellt_von
+  where e.code = p_code
+    and e.eingeloest_von is null
+    and e.gueltig_bis > now()
+    and (e.erstellt_von is null or not o.gesperrt)
+$$;
+
+-- Läuft bei jedem neuen Konto (auch /auth/v1/signup). Ohne gültige Einladung
+-- schlägt das Anlegen des Kontos fehl.
+create or replace function urlaub.neuer_benutzer()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_code text := new.raw_user_meta_data ->> 'einladung';
+  v_name text := btrim(coalesce(new.raw_user_meta_data ->> 'anzeigename', ''));
+  v_e    urlaub.einladungen;
+begin
+  if v_code is null then
+    raise exception 'EINLADUNG_FEHLT';
+  end if;
+  perform 1 from urlaub.einladungen where code = v_code for update;  -- gleichzeitiges Einlösen verhindern
+  v_e := urlaub.einladung_gueltig(v_code);
+  if v_e.code is null then
+    raise exception 'EINLADUNG_UNGUELTIG';
+  end if;
+  if v_name = '' then
+    raise exception 'NAME_LEER';
+  end if;
+  update urlaub.einladungen set eingeloest_von = new.id, eingeloest_am = now() where code = v_code;
+  insert into urlaub.organisatoren (user_id, anzeigename, benutzername, ist_hauptadmin, eingeladen_von)
+  values (new.id, v_name, split_part(new.email, '@', 1), v_e.erstellt_von is null, v_e.erstellt_von);
+  return new;
+end;
+$$;
+
+drop trigger if exists urlaub_neuer_benutzer on auth.users;
+create trigger urlaub_neuer_benutzer
+  after insert on auth.users
+  for each row execute function urlaub.neuer_benutzer();
+
+-- Nur für eine Neuinstallation im SQL-Editor: Link für das erste Konto (Hauptadmin).
+create or replace function urlaub.start_einladung()
+returns text
+language sql volatile
+set search_path = ''
+as $$
+  insert into urlaub.einladungen (erstellt_von) values (null)
+  returning (select link_basis from urlaub.app) || 'admin.html#einladung=' || code
+$$;
+
+create or replace function public.einladung_pruefen(p_code text)
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_e urlaub.einladungen := urlaub.einladung_gueltig(p_code);
+begin
+  if v_e.code is null then
+    return jsonb_build_object('gueltig', false, 'eingeladen_von', null);
+  end if;
+  return jsonb_build_object('gueltig', true, 'eingeladen_von',
+    coalesce((select anzeigename from urlaub.organisatoren where user_id = v_e.erstellt_von), 'Hauptadmin'));
+end;
+$$;
+
+create or replace function public.org_einladung_erstellen()
+returns jsonb
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_o urlaub.organisatoren := urlaub.ich();
+  v_e urlaub.einladungen;
+begin
+  insert into urlaub.einladungen (erstellt_von) values (v_o.user_id) returning * into v_e;
+  return jsonb_build_object(
+    'code',        v_e.code,
+    'link',        (select link_basis from urlaub.app) || 'admin.html#einladung=' || v_e.code,
+    'gueltig_bis', v_e.gueltig_bis);
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Hauptadmin
+-- ---------------------------------------------------------------------------
+
+create or replace function urlaub.hauptadmin()
+returns urlaub.organisatoren
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_o urlaub.organisatoren := urlaub.ich();
+begin
+  if not v_o.ist_hauptadmin then
+    raise exception 'KEIN_ZUGRIFF';
+  end if;
+  return v_o;
+end;
+$$;
+
+-- Bewusst ohne Inhalte fremder Umfragen: nur Name, Status, Anzahl.
+create or replace function public.haupt_organisatoren()
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_o urlaub.organisatoren := urlaub.hauptadmin();
+begin
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'user_id',         o.user_id,
+             'anzeigename',     o.anzeigename,
+             'benutzername',    o.benutzername,
+             'ist_hauptadmin',  o.ist_hauptadmin,
+             'gesperrt',        o.gesperrt,
+             'eingeladen_von',  v.anzeigename,
+             'angelegt_am',     o.angelegt_am,
+             'anzahl_umfragen', (select count(*) from urlaub.umfragen u where u.organisator_id = o.user_id),
+             'ich',             o.user_id = v_o.user_id)
+           order by o.anzeigename)
+    from urlaub.organisatoren o
+    left join urlaub.organisatoren v on v.user_id = o.eingeladen_von), '[]'::jsonb);
+end;
+$$;
+
+create or replace function public.haupt_sperren(p_user_id uuid, p_gesperrt boolean)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_o urlaub.organisatoren := urlaub.hauptadmin();
+begin
+  if p_user_id = v_o.user_id then
+    raise exception 'NICHT_SELBST';
+  end if;
+  update urlaub.organisatoren set gesperrt = coalesce(p_gesperrt, gesperrt) where user_id = p_user_id;
+  if not found then
+    raise exception 'NICHT_GEFUNDEN';
+  end if;
+end;
+$$;
+
+revoke all on function public.einladung_pruefen(text)              from public, anon, authenticated;
+revoke all on function public.org_einladung_erstellen()            from public, anon, authenticated;
+revoke all on function public.haupt_organisatoren()                from public, anon, authenticated;
+revoke all on function public.haupt_sperren(uuid, boolean)         from public, anon, authenticated;
+grant execute on function public.einladung_pruefen(text)           to anon, authenticated;
+grant execute on function public.org_einladung_erstellen()         to authenticated;
+grant execute on function public.haupt_organisatoren()             to authenticated;
+grant execute on function public.haupt_sperren(uuid, boolean)      to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Rechte zum Schluss
