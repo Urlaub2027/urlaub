@@ -14,6 +14,9 @@
   --fehler-rand: #e08a8a;
   --gesperrt: #f0f1f3;
   --feiertag: #8a5a00;
+  --titel: #1c2430;
+  --monat: #1c2430;
+  --band: none;
 }
 
 /* Ohne eigene Wahl folgt die Seite dem Gerät (docs/design.js setzt data-design sofort;
@@ -34,25 +37,31 @@
     --fehler-rand: #c26a6a;
     --gesperrt: #2a2f37;
     --feiertag: #e8bd6a;
+    --titel: #eceff4;
+    --monat: #eceff4;
+    --band: none;
   }
 }
 
-/* Design „Freundlich“: warm und hell */
+/* Design „Freundlich“: warm, hell und farbig (Farbstreifen oben, farbige Überschriften) */
 :root[data-design="freundlich"] {
-  --hintergrund: #fdf8f1;
+  --hintergrund: #fff4e6;
   --flaeche: #ffffff;
   --text: #2b2a33;
   --leise: #6b6470;
-  --rand: #eadfce;
+  --rand: #f0d6b8;
   --akzent: #0b7a7c;
   --akzent-text: #ffffff;
-  --gewaehlt: #e0f2f0;
+  --gewaehlt: #d3f0ea;
   --ok: #e6f5e9;
   --ok-rand: #6bbf85;
   --fehler: #fdeceb;
   --fehler-rand: #d9634a;
-  --gesperrt: #f4ede3;
+  --gesperrt: #f8e9d6;
   --feiertag: #a64b22;
+  --titel: #c2410c;
+  --monat: #0b7a7c;
+  --band: linear-gradient(90deg, #f08a5d, #f6c453 50%, #3fb8a9);
 }
 
 /* Design „Dunkel“: dunkel, aber weniger düster */
@@ -71,6 +80,9 @@
   --fehler-rand: #c26a6a;
   --gesperrt: #2a2f37;
   --feiertag: #e8bd6a;
+  --titel: #eceff4;
+  --monat: #eceff4;
+  --band: none;
 }
 
 :root[data-design="dunkel"], :root:not([data-design]) { color-scheme: light dark; }
@@ -80,14 +92,14 @@
 
 body {
   margin: 0;
-  background: var(--hintergrund);
+  background: var(--band) top / 100% 6px no-repeat, var(--hintergrund);
   color: var(--text);
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 .kopf, main { max-width: 40rem; margin: 0 auto; padding: 0 16px; }
 .kopf { padding-top: 20px; }
-h1 { font-size: 1.4rem; margin: 0; }
+h1 { font-size: 1.4rem; margin: 0; color: var(--titel); }
 h2 { font-size: 1.05rem; margin: 0 0 6px; }
 .begruessung { margin: 4px 0 0; color: var(--leise); }
 .erklaerung, .hinweis, .klein { color: var(--leise); }
@@ -111,6 +123,7 @@ h2 { font-size: 1.05rem; margin: 0 0 6px; }
 }
 .monat legend {
   font-weight: 600;
+  color: var(--monat);
   padding: 0 0 6px;
 }
 
