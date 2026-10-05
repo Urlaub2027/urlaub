@@ -78,7 +78,7 @@ test('Alte Objekte sind entfernt', async () => {
     assert.equal(r, null, name);
   }
   const alt = (await db.query(`select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where (n.nspname = 'public' and p.proname like 'admin\_%') or (n.nspname = 'urlaub' and p.proname = 'pruefe_admin')`)).rows[0].n;
+    where (n.nspname = 'public' and p.proname like 'admin\\_%') or (n.nspname = 'urlaub' and p.proname = 'pruefe_admin')`)).rows[0].n;
   assert.equal(alt, 0);
 });
 
