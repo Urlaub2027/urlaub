@@ -141,3 +141,24 @@ test('antwortSchluessel: gleiche Antworten trotz Reihenfolge und Leerraum', () =
   assert.notEqual(a, antwortSchluessel(fragen, { 1: true, 2: 'hallo', 4: [41] }));
   assert.equal(antwortSchluessel(fragen, { 1: false, 2: 'weg' }), antwortSchluessel(fragen, { 1: false }));
 });
+
+test('Vorschau: Verwaltungs-Sicht in Mitarbeiter-Sicht umwandeln', async () => {
+  const { mitarbeiterSicht } = await import('../docs/formular-logik.js');
+  const verwaltung = [
+    { id: 1, typ: 'einfach', text: 'A', hilfetext: '', position: 1, verknuepfung: 'und', aktiv: true, hat_antworten: false,
+      optionen: [{ id: 11, text: 'x', aktiv: true }, { id: 12, text: 'y', aktiv: false }],
+      regeln: { pflicht: { wert: null, aktiv: true } }, bedingungen: [], skala: null, urlaubswochen: null },
+    { id: 2, typ: 'text_kurz', text: 'B', hilfetext: '', position: 2, verknuepfung: 'oder', aktiv: true, hat_antworten: false,
+      optionen: [], regeln: { max_zeichen: { wert: 5, aktiv: false } },
+      bedingungen: [{ id: 7, quelle_id: 1, operator: 'ist_eine_von', werte: [11], aktiv: true },
+                    { id: 8, quelle_id: 1, operator: 'ist_keine_von', werte: [11], aktiv: false }], skala: null, urlaubswochen: null },
+    { id: 3, typ: 'janein', text: 'C', hilfetext: '', position: 3, verknuepfung: 'und', aktiv: false, hat_antworten: false,
+      optionen: [], regeln: {}, bedingungen: [], skala: null, urlaubswochen: null },
+  ];
+  const sicht = mitarbeiterSicht(verwaltung, []);
+  assert.deepEqual(sicht.map((f) => f.id), [1, 2]);
+  assert.deepEqual(sicht[0].optionen, [{ id: 11, text: 'x' }]);
+  assert.deepEqual(sicht[0].regeln, { pflicht: null });
+  assert.deepEqual(sicht[1].regeln, {});
+  assert.deepEqual(sicht[1].bedingungen, [{ quelle_id: 1, operator: 'ist_eine_von', werte: [11] }]);
+});

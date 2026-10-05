@@ -207,3 +207,37 @@ export function regelHinweis(frage) {
 export function istPflicht(frage) {
   return frage.typ !== 'hinweis' && Object.prototype.hasOwnProperty.call(frage.regeln || {}, 'pflicht');
 }
+
+// Vorschau der Verwaltung: Verwaltungs-Sicht (urlaub.frage_json(f, true)) in die
+// Mitarbeiter-Sicht (urlaub.frage_json(f, false)) umwandeln – nur eingeschaltete
+// Fragen, Optionen, Regeln und Bedingungen; Regeln als {art: wert}.
+// Fachregel-Duplikat von urlaub.frage_json in supabase/schema.sql.
+export function mitarbeiterSicht(fragen, kalender) {
+  return (fragen || []).filter((f) => f.aktiv !== false).map((f) => {
+    const regeln = {};
+    for (const [art, r] of Object.entries(f.regeln || {})) {
+      if (r && r.aktiv) regeln[art] = r.wert === undefined ? null : r.wert;
+    }
+    const uw = f.urlaubswochen;
+    return {
+      id: f.id,
+      typ: f.typ,
+      text: f.text,
+      hilfetext: f.hilfetext,
+      position: f.position,
+      verknuepfung: f.verknuepfung,
+      optionen: (f.optionen || []).filter((o) => o.aktiv !== false).map((o) => ({ id: o.id, text: o.text })),
+      regeln,
+      bedingungen: (f.bedingungen || []).filter((b) => b.aktiv !== false)
+        .map((b) => ({ quelle_id: b.quelle_id, operator: b.operator, werte: b.werte })),
+      skala: f.skala ?? null,
+      urlaubswochen: uw ? {
+        jahr: uw.jahr,
+        bundesland: uw.bundesland,
+        arbeitstage_pro_woche: uw.arbeitstage_pro_woche,
+        sperr_hinweis: uw.sperr_hinweis,
+        kalender: Array.isArray(kalender) && kalender.length ? kalender : (uw.kalender || []),
+      } : null,
+    };
+  });
+}

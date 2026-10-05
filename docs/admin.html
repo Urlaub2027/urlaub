@@ -90,12 +90,32 @@
       </div>
 
       <nav class="reiter" role="tablist">
-        <button type="button" role="tab" data-reiter="personen" aria-selected="true">Mitarbeiter</button>
+        <button type="button" role="tab" data-reiter="fragen" aria-selected="true">Fragen</button>
+        <button type="button" role="tab" data-reiter="personen" aria-selected="false">Mitarbeiter</button>
         <button type="button" role="tab" data-reiter="wochen" aria-selected="false">Wochen</button>
         <button type="button" role="tab" data-reiter="einstellungen" aria-selected="false">Einstellungen</button>
       </nav>
 
-      <section id="reiter-personen">
+      <section id="reiter-fragen">
+        <div class="fragen-kopf">
+          <p class="klein">Ausgeschaltete Fragen, Antwortmöglichkeiten, Regeln und Bedingungen sehen Mitarbeiter nicht.</p>
+          <button type="button" id="fragen-vorschau-knopf" class="zweitrangig klein-knopf" aria-controls="fragen-vorschau" aria-expanded="false">Vorschau</button>
+        </div>
+        <ul id="fragen-liste" class="karten"></ul>
+        <div class="box neu-form">
+          <label class="feld">Frage hinzufügen
+            <select id="neue-frage-typ"></select>
+          </label>
+          <button type="button" id="neue-frage-knopf">Hinzufügen</button>
+        </div>
+        <section id="fragen-vorschau" class="box vorschau" aria-labelledby="fragen-vorschau-titel" hidden>
+          <h2 id="fragen-vorschau-titel">Vorschau</h2>
+          <p class="klein">So sehen Mitarbeiter das Formular. Eingaben hier werden nicht gespeichert.</p>
+          <div id="fragen-vorschau-inhalt"></div>
+        </section>
+      </section>
+
+      <section id="reiter-personen" hidden>
         <form id="neu-form" class="box neu-form" novalidate>
           <label class="feld">Neuen Mitarbeiter anlegen
             <input id="neu-name" type="text" placeholder="Vor- und Nachname" autocomplete="off" required>
@@ -118,40 +138,9 @@
 
       <section id="reiter-einstellungen" hidden>
         <form id="einstellungen-form" class="box formular-box" novalidate>
+          <p class="klein">Jahr, Bundesland, Arbeitstage und die Regeln für die Wochenwahl stehen an der Frage „Urlaubswochen“ im Reiter „Fragen“.</p>
           <label class="feld">Titel
             <input id="e-titel" type="text" required>
-          </label>
-          <p id="e-grunddaten-hinweis" class="klein" hidden>Jahr, Bundesland und Arbeitstage sind gesperrt, weil schon Wünsche abgegeben wurden.</p>
-          <label class="feld">Jahr
-            <select id="e-jahr"></select>
-          </label>
-          <label class="feld">Bundesland (für die Feiertage)
-            <select id="e-land"></select>
-          </label>
-          <label class="feld">Arbeitstage pro Woche
-            <select id="e-arbeitstage">
-              <option value="6">6 (Montag–Samstag)</option>
-              <option value="5">5 (Montag–Freitag)</option>
-            </select>
-          </label>
-          <label class="feld">Urlaubstage pro Person
-            <input id="e-urlaubstage" type="number" min="1" max="366" inputmode="numeric" required>
-          </label>
-          <label class="feld">Mindestens Wochen
-            <input id="e-min" type="number" min="1" max="53" inputmode="numeric" required>
-          </label>
-          <label class="feld">Höchstens Wochen
-            <input id="e-max" type="number" min="1" max="53" inputmode="numeric" required>
-          </label>
-          <label class="feld">Höchstens Wochen am Stück
-            <input id="e-stueck" type="number" min="1" max="53" inputmode="numeric" required>
-          </label>
-          <fieldset class="feld monate-wahl">
-            <legend>Gesperrte Monate</legend>
-            <div id="e-monate" class="monate-raster"></div>
-          </fieldset>
-          <label class="feld">Hinweis zu den gesperrten Monaten
-            <textarea id="e-hinweis" rows="2"></textarea>
           </label>
           <label class="feld">Frist (deutsche Zeit)
             <input id="e-frist" type="datetime-local" required>

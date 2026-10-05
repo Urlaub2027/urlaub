@@ -323,3 +323,69 @@ button.gefahr { background: transparent; color: var(--fehler-rand); border: 1px 
 #umfrage-loeschen { width: auto; padding: 0 18px; margin: 8px 0 32px; }
 .feld select:disabled { opacity: 0.6; }
 @media (max-width: 30rem) { .kopf-admin { flex-direction: column; } .navigation { justify-content: flex-start; } }
+
+/* ------------------------------------------------------- Fragen-Editor (Verwaltung) */
+
+.fragen-kopf { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+.fragen-kopf .klein { margin: 0; flex: 1 1 16rem; }
+.frage-karte.aus { background: var(--gesperrt); }
+.frage-marken { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.marke { font-size: 0.82rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--rand); background: var(--hintergrund); }
+.marke-aus { color: var(--feiertag); border-color: var(--feiertag); }
+.frage-antworten { margin: 0 0 10px; }
+.schalter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--rand);
+  border-radius: 10px;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+.schalter input { width: 20px; height: 20px; margin: 0; accent-color: var(--akzent); }
+button.pfeil { min-width: 44px; padding: 0 10px; }
+
+.frage-editor { display: grid; gap: 20px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--rand); }
+.editor-teil { display: grid; gap: 10px; min-width: 0; }
+.editor-teil h3 { font-size: 1rem; margin: 0; }
+.editor-teil > .klein { margin: 0; }
+.frage-editor input:not([type="checkbox"]):not([type="radio"]),
+.frage-editor select,
+.frage-editor textarea {
+  font: inherit;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--hintergrund);
+  border: 1px solid var(--rand);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 44px;
+  width: 100%;
+  max-width: 100%;
+}
+.frage-editor :disabled { opacity: 0.6; }
+.frage-editor textarea { resize: vertical; }
+button.editor-knopf { width: auto; padding: 0 22px; justify-self: start; }
+.editor-paar { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.editor-liste { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.editor-zeile { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--rand); border-radius: 10px; background: var(--hintergrund); }
+.editor-zeile.aus { opacity: 0.7; }
+.zeile-knoepfe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.regeln { display: grid; gap: 8px; }
+.regel-zeile { display: grid; grid-template-columns: 1fr minmax(7rem, 12rem); align-items: center; gap: 8px; }
+.regel-zeile.regel-monate { grid-template-columns: 1fr; }
+.regel-zeile .schalter { justify-self: start; }
+.bedingung-satz { display: grid; gap: 8px; }
+.bedingung-wenn { font-weight: 600; }
+.bedingung-titel { margin: 0; font-weight: 600; }
+.bedingung-werte { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.bedingung-neu button { justify-self: start; }
+.vorschau { background: var(--hintergrund); }
+.vorschau h2 { margin-bottom: 2px; }
+.vorschau > .klein { margin: 0 0 16px; }
+@media (max-width: 30rem) {
+  .regel-zeile { grid-template-columns: 1fr; }
+  .editor-paar { grid-template-columns: 1fr; }
+}

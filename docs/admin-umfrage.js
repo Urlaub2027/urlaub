@@ -1,10 +1,11 @@
-// Verwaltung: Detailansicht einer Umfrage (Mitarbeiter, Wochen, Einstellungen, Excel).
+// Verwaltung: Detailansicht einer Umfrage (Fragen, Mitarbeiter, Wochen, Einstellungen, Excel).
 import {
-  $, meldung, knopf, element, whatsappLink, kopieren, fuelleJahre, fuelleLaender, datumDeutsch,
+  $, meldung, knopf, element, whatsappLink, kopieren, datumDeutsch,
 } from './admin-hilfe.js';
-import { zeitpunkt, MONATE } from './logik.js';
+import { zeitpunkt } from './logik.js';
 import { personenZeilen, wochenZeilen, excelBlaetter, regelHinweis } from './auswertung.js';
 import { erzeugeXlsx } from './xlsx.js';
+import { initFragen, zeigeFragen } from './admin-fragen.js';
 
 let ctx = null;      // { aufruf, fehlerAnzeigen, zurueck }
 let daten = null;    // Antwort von org_umfrage
@@ -22,14 +23,7 @@ export function initUmfrage(kontext) {
   for (const b of document.querySelectorAll('[data-reiter]')) {
     b.addEventListener('click', () => zeigeReiter(b.dataset.reiter));
   }
-  $('e-monate').replaceChildren(...MONATE.map((name, i) => {
-    const label = element('label', 'monat-wahl');
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.value = String(i + 1);
-    label.append(box, document.createTextNode(` ${name}`));
-    return label;
-  }));
+  initFragen({ aufruf: ctx.aufruf, fehlerAnzeigen: ctx.fehlerAnzeigen, neuLaden: laden });
 }
 
 export async function zeigeUmfrage(id) {
@@ -39,7 +33,8 @@ export async function zeigeUmfrage(id) {
   for (const k of ['u-titel', 'kennzahl', 'frist-anzeige']) $(k).textContent = '';
   $('personen').replaceChildren();
   $('wochen').replaceChildren();
-  zeigeReiter('personen');
+  zeigeFragen(null);
+  zeigeReiter('fragen');
   await laden();
 }
 
@@ -91,10 +86,39 @@ function zeigeReiter(name) {
 
 // ---------------------------------------------------------------- Anzeige
 
+// Jahr der Urlaubswochen-Frage (null, wenn die Umfrage keine hat).
+function urlaubsJahr() {
+  return daten.fragen?.find((f) => f.typ === 'urlaubswochen')?.urlaubswochen?.jahr ?? null;
+}
+
+// Übergang bis zur neuen Auswertung (Task 6): auswertung.js erwartet noch die alte
+// Form mit wochen/urlaubstage/regelverstoss je Mitarbeiter. Wird aus den Antworten
+// auf die Urlaubswochen-Frage abgeleitet.
+function alteForm() {
+  const frage = daten.fragen?.find((f) => f.typ === 'urlaubswochen');
+  const tage = new Map((daten.kalender || []).map((k) => [k.kw, k.arbeitstage]));
+  return {
+    ...daten,
+    kalender: daten.kalender || [],
+    mitarbeiter: (daten.mitarbeiter || []).map((m) => {
+      const antwort = frage ? m.antworten?.[frage.id] : null;
+      const wochen = Array.isArray(antwort) ? antwort.map(Number) : [];
+      return {
+        ...m,
+        wochen,
+        urlaubstage: wochen.reduce((summe, kw) => summe + (tage.get(kw) || 0), 0),
+        regelverstoss: frage ? m.verstoesse?.[frage.id] || null : null,
+      };
+    }),
+  };
+}
+
 function zeichne() {
   const e = daten.einstellungen;
-  const personen = personenZeilen(daten);
-  $('u-titel').textContent = `${e.titel} (${e.jahr})`;
+  zeigeFragen(daten); // zuerst: der Fragen-Reiter hängt nicht an der Übergangs-Auswertung
+  const personen = personenZeilen(alteForm());
+  const jahr = urlaubsJahr();
+  $('u-titel').textContent = jahr ? `${e.titel} (${jahr})` : e.titel;
   $('kennzahl').textContent = `${personen.filter((p) => p.abgegeben).length} von ${personen.length} haben abgegeben`;
   $('frist-anzeige').textContent = e.offen
     ? `Abgabe möglich bis ${zeitpunkt(e.frist)}`
@@ -137,7 +161,7 @@ function zeichnePersonen(personen) {
 }
 
 function zeichneWochen() {
-  const zeilen = wochenZeilen(daten);
+  const zeilen = wochenZeilen(alteForm());
   const max = Math.max(1, ...zeilen.map((w) => w.anzahl));
   $('wochen').replaceChildren(...zeilen.map((w) => {
     const tr = document.createElement('tr');
@@ -152,25 +176,13 @@ function zeichneWochen() {
 function einstellungenFuellen() {
   const e = daten.einstellungen;
   formularFuer = Number(e.id);
-  const jetzt = new Date().getFullYear();
   $('e-titel').value = e.titel;
-  fuelleJahre($('e-jahr'), Math.min(e.jahr, jetzt), Math.max(e.jahr, jetzt + 3), e.jahr);
-  fuelleLaender($('e-land'), e.bundesland);
-  $('e-arbeitstage').value = String(e.arbeitstage_pro_woche);
-  for (const id of ['e-jahr', 'e-land', 'e-arbeitstage']) $(id).disabled = !e.grunddaten_aenderbar;
-  $('e-grunddaten-hinweis').hidden = e.grunddaten_aenderbar;
-  $('e-urlaubstage').value = String(e.urlaubstage);
-  $('e-min').value = String(e.min_wochen);
-  $('e-max').value = String(e.max_wochen);
-  $('e-stueck').value = String(e.max_am_stueck);
-  for (const box of $('e-monate').querySelectorAll('input')) box.checked = e.gesperrte_monate.includes(Number(box.value));
-  $('e-hinweis').value = e.sperr_hinweis;
   $('e-frist').value = e.frist_eingabe;
   zeichneFreieTage();
 }
 
 function zeichneFreieTage() {
-  const e = daten.einstellungen;
+  const jahr = urlaubsJahr();
   $('freie-tage').replaceChildren(...daten.freie_tage.map((f) => {
     const li = element('li', 'karte');
     li.append(element('p', 'karte-name', `${datumDeutsch(f.datum)} – ${f.name}`));
@@ -180,8 +192,8 @@ function zeichneFreieTage() {
     li.append(aktionen);
     return li;
   }));
-  $('frei-datum').min = `${e.jahr}-01-01`;
-  $('frei-datum').max = `${e.jahr}-12-31`;
+  $('frei-datum').min = jahr ? `${jahr}-01-01` : '';
+  $('frei-datum').max = jahr ? `${jahr}-12-31` : '';
 }
 
 // ---------------------------------------------------------------- Aktionen
@@ -199,24 +211,7 @@ async function einstellungenSpeichern(ereignis) {
     meldung('Bitte warte, bis die Umfrage geladen ist.');
     return;
   }
-  const e = daten.einstellungen;
-  const p = {
-    titel: $('e-titel').value,
-    urlaubstage: Number($('e-urlaubstage').value),
-    min_wochen: Number($('e-min').value),
-    max_wochen: Number($('e-max').value),
-    max_am_stueck: Number($('e-stueck').value),
-    gesperrte_monate: [...$('e-monate').querySelectorAll('input:checked')].map((b) => Number(b.value)),
-    sperr_hinweis: $('e-hinweis').value,
-    frist: $('e-frist').value,
-  };
-  if (e.grunddaten_aenderbar) {
-    Object.assign(p, {
-      jahr: Number($('e-jahr').value),
-      bundesland: $('e-land').value,
-      arbeitstage_pro_woche: Number($('e-arbeitstage').value),
-    });
-  }
+  const p = { titel: $('e-titel').value, frist: $('e-frist').value };
   if (await aktion('org_umfrage_speichern', { p_umfrage_id: umfrageId, p_daten: p }, 'Einstellungen gespeichert.')) {
     if (datenPasst()) einstellungenFuellen(); // nur nach erfolgreichem Speichern das Formular neu füllen
   }
@@ -248,7 +243,7 @@ async function umfrageLoeschen() {
 
 function excelHerunterladen() {
   if (!datenPasst()) return;
-  const blob = new Blob([erzeugeXlsx(excelBlaetter(daten))],
+  const blob = new Blob([erzeugeXlsx(excelBlaetter(alteForm()))],
     { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const heute = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
   const name = daten.einstellungen.titel.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'Umfrage';
