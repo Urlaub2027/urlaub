@@ -1,7 +1,7 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { neueDatenbank, organisator, umfrageAnlegen } from './helfer.mjs';
+import { neueDatenbank, organisator, umfrageAnlegen, urlaubsfrageId } from './helfer.mjs';
 
 const REFERENZ = JSON.parse(readFileSync(new URL('./fixtures/feiertage-2026-2030.json', import.meta.url), 'utf8')).jahre;
 let db;
@@ -62,7 +62,7 @@ test('Kalender 2026: 53 KW, KW 1 beginnt am 29.12.2025', async () => {
 
 test('5-Tage-Woche: Samstags-Feiertag zählt nicht, Werktags-Feiertag schon', async () => {
   const id = await umfrageAnlegen(db, chef);
-  await db.query('update urlaub.umfragen set arbeitstage_pro_woche = 5 where id = $1', [id]);
+  await db.query('update urlaub.fragen set arbeitstage_pro_woche = 5 where id = $1', [await urlaubsfrageId(db, id)]);
   const k = await kalender(id);
   assert.equal(k[16].kw, 17);
   assert.equal(k[16].arbeitstage, 5); // Sa 01.05.
@@ -72,7 +72,8 @@ test('5-Tage-Woche: Samstags-Feiertag zählt nicht, Werktags-Feiertag schon', as
 test('Zusätzliche freie Tage und gesperrte Monate wirken pro Umfrage', async () => {
   const id = await umfrageAnlegen(db, chef);
   await db.query("insert into urlaub.freie_tage (umfrage_id, datum, name) values ($1, '2027-08-09', 'Betriebsruhe')", [id]);
-  await db.query("update urlaub.umfragen set gesperrte_monate = '{7,8}' where id = $1", [id]);
+  await db.query("update urlaub.regeln set wert = '[7,8]' where art = 'gesperrte_monate' and frage_id = $1",
+    [await urlaubsfrageId(db, id)]);
   const k = await kalender(id);
   assert.equal(k[31].kw, 32);
   assert.equal(k[31].arbeitstage, 5);
@@ -87,4 +88,19 @@ test('kalender_json liefert Anzeigeformat', async () => {
   assert.deepEqual(j[0], { kw: 1, von: '04.01.', bis: '10.01.', monat: 1, arbeitstage: 5,
     feiertag: 'Heilige Drei Könige', gesperrt: false });
   assert.equal(j.length, 52);
+});
+
+test('Ausgeschaltete Regel „gesperrte Monate“ sperrt nichts', async () => {
+  const id = await umfrageAnlegen(db, chef);
+  await db.query("update urlaub.regeln set aktiv = false where art = 'gesperrte_monate' and frage_id = $1",
+    [await urlaubsfrageId(db, id)]);
+  const k = await kalender(id);
+  assert.equal(k.filter((w) => w.gesperrt).length, 0);
+});
+
+test('Umfrage ohne Urlaubswochen-Frage hat keinen Kalender', async () => {
+  const r = await db.query("insert into urlaub.umfragen (organisator_id, titel, frist) values ($1, 'Ohne', now()) returning id", [chef]);
+  assert.equal((await kalender(r.rows[0].id)).length, 0);
+  const j = (await db.query('select urlaub.kalender_json($1) as j', [r.rows[0].id])).rows[0].j;
+  assert.deepEqual(j, []);
 });

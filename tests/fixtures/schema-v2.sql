@@ -1,9 +1,8 @@
--- Urlaubswünsche – Datenbank (Stand 3: Fragen-Baukasten)
+-- Urlaubswünsche – Datenbank (Stand 2: mehrere Umfragen)
 --
 -- Einmal komplett im Supabase SQL-Editor ausführen – bei einer neuen Installation
--- ebenso wie zur Umstellung von Stand 2: jede Umfrage erhält eine Frage
--- „Urlaubswochen“ mit ihren bisherigen Einstellungen; Mitarbeiter, Codes und
--- Abgaben bleiben erhalten. Erneutes Ausführen ist unschädlich.
+-- ebenso wie zur Umstellung von Stand 1 (eine Umfrage): Mitarbeiter, Codes und
+-- Abgaben werden dann in Umfrage Nr. 1 übernommen. Erneutes Ausführen ist unschädlich.
 --
 -- ACHTUNG bei späteren Änderungen: Ändern sich die Parameter einer Funktion,
 -- legt "create or replace" eine ZWEITE Funktion an; die alte bleibt mitsamt
@@ -22,6 +21,9 @@ begin;
 
 create schema if not exists urlaub;
 revoke all on schema urlaub from public, anon, authenticated;
+
+-- Stand 1 hatte urlaub.kalender als View; sie muss vor der gleichnamigen Funktion weg.
+drop view if exists urlaub.links, urlaub.auswertung_personen, urlaub.auswertung_wochen, urlaub.kalender;
 
 -- ---------------------------------------------------------------------------
 -- Tabellen
@@ -53,11 +55,24 @@ create table if not exists urlaub.einladungen (
 );
 
 create table if not exists urlaub.umfragen (
-  id             bigint generated always as identity primary key,
-  organisator_id uuid not null references urlaub.organisatoren (user_id) on delete cascade,
-  titel          text not null check (btrim(titel) <> ''),
-  frist          timestamptz not null,
-  angelegt_am    timestamptz not null default now()
+  id                    bigint generated always as identity primary key,
+  organisator_id        uuid not null references urlaub.organisatoren (user_id) on delete cascade,
+  titel                 text not null check (btrim(titel) <> ''),
+  jahr                  int  not null check (jahr between 2020 and 2100),
+  bundesland            text not null check (bundesland in
+                          ('BW','BY','BE','BB','HB','HH','HE','MV','NI','NW','RP','SL','SN','ST','SH','TH')),
+  arbeitstage_pro_woche int  not null default 6 check (arbeitstage_pro_woche in (5, 6)),
+  urlaubstage           int  not null default 36 check (urlaubstage between 1 and 366),
+  min_wochen            int  not null default 1,
+  max_wochen            int  not null default 6,
+  max_am_stueck         int  not null default 3 check (max_am_stueck between 1 and 53),
+  gesperrte_monate      int[] not null default '{12}'
+                        check (array_position(gesperrte_monate, null) is null
+                               and 1 <= all (gesperrte_monate) and 12 >= all (gesperrte_monate)),
+  sperr_hinweis         text not null default 'Im Dezember ist kein Urlaub möglich.',
+  frist                 timestamptz not null,
+  angelegt_am           timestamptz not null default now(),
+  check (min_wochen >= 1 and min_wochen <= max_wochen and max_wochen <= 53)
 );
 
 -- Örtliche Feiertage oder Betriebsruhe: kosten keinen Urlaubstag.
@@ -67,70 +82,6 @@ create table if not exists urlaub.freie_tage (
   name       text   not null check (btrim(name) <> ''),
   primary key (umfrage_id, datum)
 );
-
-create table if not exists urlaub.fragen (
-  id                    bigint generated always as identity primary key,
-  umfrage_id            bigint not null references urlaub.umfragen (id) on delete cascade,
-  position              int not null,
-  typ                   text not null check (typ in ('urlaubswochen', 'einfach', 'mehrfach', 'janein', 'skala',
-                                                     'text_kurz', 'text_lang', 'zahl', 'datum', 'hinweis')),
-  text                  text not null check (btrim(text) <> ''),
-  hilfetext             text not null default '',
-  aktiv                 boolean not null default true,
-  verknuepfung          text not null default 'und' check (verknuepfung in ('und', 'oder')),
-  -- nur Urlaubswochen
-  jahr                  int check (jahr between 2020 and 2100),
-  bundesland            text check (bundesland in
-                          ('BW','BY','BE','BB','HB','HH','HE','MV','NI','NW','RP','SL','SN','ST','SH','TH')),
-  arbeitstage_pro_woche int check (arbeitstage_pro_woche in (5, 6)),
-  sperr_hinweis         text,
-  -- nur Skala
-  skala_von             int,
-  skala_bis             int,
-  skala_links           text,
-  skala_rechts          text,
-  check (typ <> 'urlaubswochen'
-         or (jahr is not null and bundesland is not null and arbeitstage_pro_woche is not null and sperr_hinweis is not null)),
-  check (typ <> 'skala'
-         or (skala_von is not null and skala_bis is not null and skala_von < skala_bis and skala_bis - skala_von <= 10))
-);
-create unique index if not exists fragen_eine_urlaubswochen on urlaub.fragen (umfrage_id) where typ = 'urlaubswochen';
-create index if not exists fragen_umfrage on urlaub.fragen (umfrage_id, position);
-
-create table if not exists urlaub.optionen (
-  id       bigint generated always as identity primary key,
-  frage_id bigint not null references urlaub.fragen (id) on delete cascade,
-  position int not null,
-  text     text not null check (btrim(text) <> ''),
-  aktiv    boolean not null default true
-);
-create index if not exists optionen_frage on urlaub.optionen (frage_id, position);
-
--- Höchstens eine Regel je Art und Frage. wert: null (pflicht), Zahl, Datum-Text oder Monatsliste.
-create table if not exists urlaub.regeln (
-  id       bigint generated always as identity primary key,
-  frage_id bigint not null references urlaub.fragen (id) on delete cascade,
-  art      text not null check (art in ('pflicht', 'min_anzahl', 'max_anzahl', 'max_zeichen', 'min_zahl', 'max_zahl',
-                                        'fruehestens', 'spaetestens', 'min_wochen', 'max_wochen', 'max_am_stueck',
-                                        'max_urlaubstage', 'gesperrte_monate')),
-  wert     jsonb not null default 'null',
-  aktiv    boolean not null default true,
-  unique (frage_id, art)
-);
-
--- Sichtbarkeits-Bedingung: frage_id = Zielfrage, quelle_id = frühere Frage.
--- quelle_id ohne "on delete": eine verwendete Quellfrage ist nicht löschbar.
-create table if not exists urlaub.bedingungen (
-  id        bigint generated always as identity primary key,
-  frage_id  bigint not null references urlaub.fragen (id) on delete cascade,
-  quelle_id bigint not null references urlaub.fragen (id),
-  operator  text not null check (operator in ('ist_eine_von', 'ist_keine_von', 'enthaelt_eine_von',
-                                              'enthaelt_keine_von', 'ist', 'gleich', 'groesser', 'kleiner')),
-  werte     jsonb not null,
-  aktiv     boolean not null default true
-);
-create index if not exists bedingungen_frage on urlaub.bedingungen (frage_id);
-create index if not exists bedingungen_quelle on urlaub.bedingungen (quelle_id);
 
 -- gen_random_uuid() liefert 122 Bit Zufall aus einem kryptografischen Generator.
 create table if not exists urlaub.mitarbeiter (
@@ -145,27 +96,9 @@ create table if not exists urlaub.mitarbeiter (
 
 create table if not exists urlaub.abgaben (
   mitarbeiter_id bigint primary key references urlaub.mitarbeiter (id) on delete cascade,
+  wochen         int[] not null,
   geaendert_am   timestamptz not null default now()
 );
-
--- frage_id ohne "on delete": eine beantwortete Frage ist nicht löschbar.
-create table if not exists urlaub.antworten (
-  mitarbeiter_id bigint not null references urlaub.mitarbeiter (id) on delete cascade,
-  frage_id       bigint not null references urlaub.fragen (id),
-  wert           jsonb not null,
-  primary key (mitarbeiter_id, frage_id)
-);
-create index if not exists antworten_frage on urlaub.antworten (frage_id);
-
--- option_id ohne "on delete": eine gewählte Antwortmöglichkeit ist nicht löschbar.
-create table if not exists urlaub.antwort_optionen (
-  mitarbeiter_id bigint not null,
-  frage_id       bigint not null,
-  option_id      bigint not null references urlaub.optionen (id),
-  primary key (mitarbeiter_id, option_id),
-  foreign key (mitarbeiter_id, frage_id) references urlaub.antworten (mitarbeiter_id, frage_id) on delete cascade
-);
-create index if not exists antwort_optionen_option on urlaub.antwort_optionen (option_id);
 
 insert into urlaub.app (link_basis) values ('https://urlaub2027.github.io/urlaub/')
 on conflict (id) do nothing;
@@ -238,40 +171,24 @@ as $$
   order by datum
 $$;
 
--- Die Urlaubswochen-Frage einer Umfrage (höchstens eine), sonst eine Zeile mit lauter null.
-create or replace function urlaub.urlaubsfrage(p_umfrage_id bigint)
-returns urlaub.fragen
-language sql stable
-set search_path = ''
-as $$
-  select f.* from urlaub.fragen f where f.umfrage_id = p_umfrage_id and f.typ = 'urlaubswochen'
-$$;
-
--- Kalenderwochen der Urlaubswochen-Frage nach ISO 8601. Eine Woche gehört zum Monat ihres
--- Donnerstags. Gesperrt ist ein Monat nur, wenn die Regel "gesperrte_monate" eingeschaltet ist.
+-- Kalenderwochen einer Umfrage nach ISO 8601. Eine Woche gehört zum Monat ihres
+-- Donnerstags. Arbeitstage = Arbeitstage pro Woche minus freie Tage auf diesen Tagen.
 create or replace function urlaub.kalender(p_umfrage_id bigint)
 returns table (kw int, montag date, sonntag date, monat int, arbeitstage int, feiertag text, gesperrt boolean)
 language sql stable
 set search_path = ''
 as $$
-  with f as (
-    select f.* from urlaub.fragen f where f.umfrage_id = p_umfrage_id and f.typ = 'urlaubswochen'
-  ),
-  u as (
-    select f.jahr, f.bundesland, f.arbeitstage_pro_woche,
-           coalesce((select array(select jsonb_array_elements_text(r.wert)::int)
-                     from urlaub.regeln r
-                     where r.frage_id = f.id and r.art = 'gesperrte_monate' and r.aktiv
-                       and jsonb_typeof(r.wert) = 'array'), '{}'::int[]) as gesperrte_monate,
-           make_date(f.jahr, 1, 4) - (extract(isodow from make_date(f.jahr, 1, 4))::int - 1) as montag1,
-           extract(week from make_date(f.jahr, 12, 28))::int as anzahl
-    from f
+  with u as (
+    select u.*,
+           make_date(u.jahr, 1, 4) - (extract(isodow from make_date(u.jahr, 1, 4))::int - 1) as montag1,
+           extract(week from make_date(u.jahr, 12, 28))::int as anzahl
+    from urlaub.umfragen u where u.id = p_umfrage_id
   ),
   frei as (
     select l.datum, l.name from u, generate_series(u.jahr - 1, u.jahr + 1) j (jahr),
          urlaub.landesfeiertage(j.jahr, u.bundesland) l
     union
-    select fr.datum, fr.name from urlaub.freie_tage fr where fr.umfrage_id = p_umfrage_id
+    select f.datum, f.name from urlaub.freie_tage f where f.umfrage_id = p_umfrage_id
   ),
   w as (
     select u.arbeitstage_pro_woche, u.gesperrte_monate, g.kw, u.montag1 + (g.kw - 1) * 7 as montag
@@ -281,11 +198,11 @@ as $$
          w.montag,
          w.montag + 6,
          extract(month from w.montag + 3)::int,
-         w.arbeitstage_pro_woche - count(distinct fr.datum)::int,
-         string_agg(distinct fr.name, ', ' order by fr.name),
+         w.arbeitstage_pro_woche - count(distinct f.datum)::int,
+         string_agg(distinct f.name, ', ' order by f.name),
          extract(month from w.montag + 3)::int = any (w.gesperrte_monate)
   from w
-  left join frei fr on fr.datum between w.montag and w.montag + (w.arbeitstage_pro_woche - 1)
+  left join frei f on f.datum between w.montag and w.montag + (w.arbeitstage_pro_woche - 1)
   group by w.kw, w.montag, w.arbeitstage_pro_woche, w.gesperrte_monate
   order by w.kw
 $$;
@@ -306,77 +223,71 @@ as $$
   from urlaub.kalender(p_umfrage_id) k
 $$;
 
--- Standard-Frage "Urlaubswochen" mit den bisherigen Vorgaben als eingeschaltete Regeln.
-create or replace function urlaub.standard_urlaubsfrage(p_umfrage_id bigint, p_jahr int, p_bundesland text)
-returns bigint
-language plpgsql volatile
-set search_path = ''
-as $$
-declare
-  v_id bigint;
-begin
-  insert into urlaub.fragen (umfrage_id, position, typ, text, jahr, bundesland, arbeitstage_pro_woche, sperr_hinweis)
-  values (p_umfrage_id,
-          coalesce((select max(position) from urlaub.fragen where umfrage_id = p_umfrage_id), 0) + 1,
-          'urlaubswochen', 'In welchen Wochen möchtest du Urlaub nehmen?',
-          p_jahr, p_bundesland, 6, 'Im Dezember ist kein Urlaub möglich.')
-  returning id into v_id;
-  insert into urlaub.regeln (frage_id, art, wert) values
-    (v_id, 'pflicht', 'null'), (v_id, 'min_wochen', '1'), (v_id, 'max_wochen', '6'),
-    (v_id, 'max_am_stueck', '3'), (v_id, 'max_urlaubstage', '36'), (v_id, 'gesperrte_monate', '[12]');
-  return v_id;
-end;
-$$;
-
 -- ---------------------------------------------------------------------------
--- Umstellung von Stand 2 (Wochen-Einstellungen in urlaub.umfragen). Läuft nur,
--- solange urlaub.umfragen noch die Spalte "jahr" hat.
+-- Umstellung von Stand 1 (eine Umfrage). Läuft nur, solange es die alte
+-- Tabelle urlaub.einstellungen noch gibt.
 -- ---------------------------------------------------------------------------
 
 do $$
+declare
+  v_umfrage bigint;
+  v_doppelt text;
 begin
-  if not exists (select 1 from information_schema.columns
-                 where table_schema = 'urlaub' and table_name = 'umfragen' and column_name = 'jahr') then
+  if to_regclass('urlaub.einstellungen') is null then
     return;
   end if;
 
-  insert into urlaub.fragen (umfrage_id, position, typ, text, jahr, bundesland, arbeitstage_pro_woche, sperr_hinweis)
-  select u.id, 1, 'urlaubswochen', 'In welchen Wochen möchtest du Urlaub nehmen?',
-         u.jahr, u.bundesland, u.arbeitstage_pro_woche, u.sperr_hinweis
-  from urlaub.umfragen u
-  where not exists (select 1 from urlaub.fragen f where f.umfrage_id = u.id and f.typ = 'urlaubswochen');
+  select string_agg(n, ', ') into v_doppelt from (
+    select min(name) as n from urlaub.mitarbeiter
+    group by lower(name) having count(*) > 1) d;
+  if v_doppelt is not null then
+    raise exception 'UMSTELLUNG abgebrochen: Mitarbeiter mit gleichem Namen (nur Groß-/Kleinschreibung verschieden): %. Bitte vorher umbenennen.', v_doppelt;
+  end if;
 
-  insert into urlaub.regeln (frage_id, art, wert, aktiv)
-  select f.id, x.art, x.wert, true
-  from urlaub.fragen f
-  join urlaub.umfragen u on u.id = f.umfrage_id
-  cross join lateral (values
-    ('pflicht',          'null'::jsonb),
-    ('min_wochen',       to_jsonb(u.min_wochen)),
-    ('max_wochen',       to_jsonb(u.max_wochen)),
-    ('max_am_stueck',    to_jsonb(u.max_am_stueck)),
-    ('max_urlaubstage',  to_jsonb(u.urlaubstage)),
-    ('gesperrte_monate', to_jsonb(u.gesperrte_monate))) as x (art, wert)
-  where f.typ = 'urlaubswochen'
-  on conflict (frage_id, art) do nothing;
+  alter table urlaub.mitarbeiter add column if not exists umfrage_id bigint
+    references urlaub.umfragen (id) on delete cascade;
 
-  insert into urlaub.antworten (mitarbeiter_id, frage_id, wert)
-  select a.mitarbeiter_id, f.id, to_jsonb(a.wochen)
-  from urlaub.abgaben a
-  join urlaub.mitarbeiter m on m.id = a.mitarbeiter_id
-  join urlaub.fragen f on f.umfrage_id = m.umfrage_id and f.typ = 'urlaubswochen'
+  insert into urlaub.app (link_basis)
+  select link_basis from urlaub.einstellungen
+  on conflict (id) do update set link_basis = excluded.link_basis;
+
+  insert into urlaub.organisatoren (user_id, anzeigename, benutzername, ist_hauptadmin)
+  select a.user_id, coalesce(nullif(btrim(a.notiz), ''), 'Admin'), split_part(u.email, '@', 1), true
+  from urlaub.admins a join auth.users u on u.id = a.user_id
+  on conflict (user_id) do nothing;
+
+  if not exists (select 1 from urlaub.organisatoren) then
+    raise exception 'UMSTELLUNG abgebrochen: kein Admin in urlaub.admins gefunden.';
+  end if;
+
+  insert into urlaub.umfragen (organisator_id, titel, jahr, bundesland, arbeitstage_pro_woche,
+                               urlaubstage, max_wochen, max_am_stueck, gesperrte_monate,
+                               sperr_hinweis, frist)
+  select (select user_id from urlaub.organisatoren order by angelegt_am, user_id limit 1),
+         'Urlaubswünsche 2027', 2027, 'BY', 6, e.urlaubstage, e.max_wochen, 3, '{12}',
+         e.dezember_hinweis, e.frist
+  from urlaub.einstellungen e
+  returning id into v_umfrage;
+
+  -- Feiertage aus Stand 1, die keine landesweiten Feiertage sind, bleiben als freie Tage erhalten.
+  insert into urlaub.freie_tage (umfrage_id, datum, name)
+  select v_umfrage, f.datum, f.name
+  from urlaub.feiertage f
+  where extract(year from f.datum) = 2027
+    and not exists (select 1 from urlaub.landesfeiertage(2027, 'BY') l where l.datum = f.datum)
   on conflict do nothing;
 
-  alter table urlaub.abgaben drop constraint if exists abgaben_wochen_gueltig;
-  alter table urlaub.abgaben drop column if exists wochen;
-  alter table urlaub.umfragen
-    drop column jahr, drop column bundesland, drop column arbeitstage_pro_woche, drop column urlaubstage,
-    drop column min_wochen, drop column max_wochen, drop column max_am_stueck, drop column gesperrte_monate,
-    drop column sperr_hinweis;
+  update urlaub.mitarbeiter set umfrage_id = v_umfrage where umfrage_id is null;
 
-  drop function if exists public.urlaub_speichern(text, int[]);
-  drop function if exists urlaub.regelverstoss(bigint, int[]);
-  drop function if exists urlaub.antwort(bigint);
+  drop function if exists public.admin_uebersicht();
+  drop function if exists public.admin_mitarbeiter_anlegen(text);
+  drop function if exists public.admin_mitarbeiter_loeschen(bigint);
+  drop function if exists public.admin_link_erneuern(bigint);
+  drop function if exists public.admin_einstellungen_speichern(text, text);
+  drop function if exists urlaub.pruefe_admin();
+  drop table urlaub.einstellungen, urlaub.feiertage, urlaub.admins;
+  alter table urlaub.mitarbeiter drop constraint if exists mitarbeiter_name_key;
+  alter table urlaub.abgaben drop constraint if exists abgaben_wochen_check;
 end;
 $$;
 
@@ -387,6 +298,17 @@ $$;
 alter table urlaub.mitarbeiter alter column umfrage_id set not null;
 create unique index if not exists mitarbeiter_name_je_umfrage on urlaub.mitarbeiter (umfrage_id, lower(name));
 
+do $$
+begin
+  if not exists (select 1 from pg_constraint
+                   where conname = 'abgaben_wochen_gueltig' and conrelid = 'urlaub.abgaben'::regclass) then
+    alter table urlaub.abgaben add constraint abgaben_wochen_gueltig
+      check (cardinality(wochen) >= 1 and array_position(wochen, null) is null
+             and 1 <= all (wochen) and 53 >= all (wochen));
+  end if;
+end;
+$$;
+
 alter table urlaub.app           enable row level security;
 alter table urlaub.organisatoren enable row level security;
 alter table urlaub.einladungen   enable row level security;
@@ -394,22 +316,139 @@ alter table urlaub.umfragen      enable row level security;
 alter table urlaub.freie_tage    enable row level security;
 alter table urlaub.mitarbeiter   enable row level security;
 alter table urlaub.abgaben       enable row level security;
-alter table urlaub.fragen           enable row level security;
-alter table urlaub.optionen         enable row level security;
-alter table urlaub.regeln           enable row level security;
-alter table urlaub.bedingungen      enable row level security;
-alter table urlaub.antworten        enable row level security;
-alter table urlaub.antwort_optionen enable row level security;
 
 -- ---------------------------------------------------------------------------
--- Mitarbeiter-Funktionen: siehe Task 2 (Prüfung und Absenden).
+-- Regeln und Mitarbeiter-Funktionen
 -- ---------------------------------------------------------------------------
 
--- Stand 2 → 3: alte Wochen-Funktionen entfernen (auch bei Neuinstallation harmlos).
-drop function if exists public.urlaub_speichern(text, int[]);
-drop function if exists public.urlaub_laden(text);
-drop function if exists urlaub.regelverstoss(bigint, int[]);
-drop function if exists urlaub.antwort(bigint);
+-- Erster Regelverstoß einer Auswahl als Fehlercode, sonst null.
+create or replace function urlaub.regelverstoss(p_umfrage_id bigint, p_wochen int[])
+returns text
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_u       urlaub.umfragen;
+  v_erlaubt int[];
+  v_wochen  int[];
+  v_stueck  int;
+  v_tage    int;
+begin
+  select * into strict v_u from urlaub.umfragen where id = p_umfrage_id;
+  if p_wochen is null or cardinality(p_wochen) = 0 then
+    return 'KEINE_WOCHE';
+  end if;
+  select coalesce(array_agg(k.kw), '{}') into v_erlaubt from urlaub.kalender(p_umfrage_id) k where not k.gesperrt;
+  if exists (select 1 from unnest(p_wochen) x where x is null or not (x = any (v_erlaubt))) then
+    return 'UNGUELTIGE_WOCHE';
+  end if;
+  select array_agg(distinct x order by x) into v_wochen from unnest(p_wochen) x;
+  if cardinality(v_wochen) <> cardinality(p_wochen) then
+    return 'DOPPELTE_WOCHE';
+  end if;
+  if cardinality(v_wochen) < v_u.min_wochen then
+    return 'ZU_WENIGE_WOCHEN';
+  end if;
+  if cardinality(v_wochen) > v_u.max_wochen then
+    return 'ZU_VIELE_WOCHEN';
+  end if;
+  -- längste Folge aufeinanderfolgender KWs
+  select max(n) into v_stueck
+  from (select count(*) as n
+        from (select x - row_number() over (order by x) as gruppe from unnest(v_wochen) x) s
+        group by gruppe) t;
+  if v_stueck > v_u.max_am_stueck then
+    return 'ZU_VIELE_AM_STUECK';
+  end if;
+  select sum(k.arbeitstage) into v_tage from urlaub.kalender(p_umfrage_id) k where k.kw = any (v_wochen);
+  if v_tage > v_u.urlaubstage then
+    return 'ZU_VIELE_TAGE';
+  end if;
+  return null;
+end;
+$$;
+
+-- Antwort an die Mitarbeiter-Seite: nur Daten dieser Person und ihrer Umfrage.
+create or replace function urlaub.antwort(p_mitarbeiter_id bigint)
+returns jsonb
+language sql stable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'name',                  m.name,
+    'titel',                 u.titel,
+    'jahr',                  u.jahr,
+    'wochen',                coalesce(to_jsonb(a.wochen), '[]'::jsonb),
+    'geaendert_am',          a.geaendert_am,
+    'frist',                 u.frist,
+    'offen',                 now() < u.frist,
+    'min_wochen',            u.min_wochen,
+    'max_wochen',            u.max_wochen,
+    'max_am_stueck',         u.max_am_stueck,
+    'urlaubstage',           u.urlaubstage,
+    'arbeitstage_pro_woche', u.arbeitstage_pro_woche,
+    'sperr_hinweis',         u.sperr_hinweis,
+    'kalender',              urlaub.kalender_json(u.id))
+  from urlaub.mitarbeiter m
+  join urlaub.umfragen u on u.id = m.umfrage_id
+  left join urlaub.abgaben a on a.mitarbeiter_id = m.id
+  where m.id = p_mitarbeiter_id
+$$;
+
+create or replace function public.urlaub_laden(p_code text)
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_id bigint;
+begin
+  select id into v_id from urlaub.mitarbeiter where code = p_code;
+  if v_id is null then
+    raise exception 'LINK_UNGUELTIG';
+  end if;
+  return urlaub.antwort(v_id);
+end;
+$$;
+
+create or replace function public.urlaub_speichern(p_code text, p_wochen int[])
+returns jsonb
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_m      urlaub.mitarbeiter;
+  v_frist  timestamptz;
+  v_fehler text;
+  v_wochen int[];
+begin
+  select * into v_m from urlaub.mitarbeiter where code = p_code;
+  if not found then
+    raise exception 'LINK_UNGUELTIG';
+  end if;
+  select frist into v_frist from urlaub.umfragen where id = v_m.umfrage_id;
+  if now() >= v_frist then
+    raise exception 'FRIST_ABGELAUFEN';
+  end if;
+  v_fehler := urlaub.regelverstoss(v_m.umfrage_id, p_wochen);
+  if v_fehler is not null then
+    raise exception '%', v_fehler;
+  end if;
+  select array_agg(x order by x) into v_wochen from unnest(p_wochen) x;
+  insert into urlaub.abgaben (mitarbeiter_id, wochen, geaendert_am)
+  values (v_m.id, v_wochen, now())
+  on conflict (mitarbeiter_id)
+  do update set wochen = excluded.wochen, geaendert_am = excluded.geaendert_am;
+  return urlaub.antwort(v_m.id);
+end;
+$$;
+
+revoke all on function public.urlaub_laden(text)            from public, anon, authenticated;
+revoke all on function public.urlaub_speichern(text, int[]) from public, anon, authenticated;
+grant execute on function public.urlaub_laden(text)            to anon;
+grant execute on function public.urlaub_speichern(text, int[]) to anon;
 
 -- ---------------------------------------------------------------------------
 -- Organisatoren: Hilfsfunktionen (intern)
@@ -499,14 +538,14 @@ begin
     select jsonb_agg(jsonb_build_object(
              'id',          u.id,
              'titel',       u.titel,
-             'jahr',        (select f.jahr from urlaub.fragen f where f.umfrage_id = u.id and f.typ = 'urlaubswochen'),
-             'bundesland',  (select f.bundesland from urlaub.fragen f where f.umfrage_id = u.id and f.typ = 'urlaubswochen'),
+             'jahr',        u.jahr,
+             'bundesland',  u.bundesland,
              'frist',       u.frist,
              'offen',       now() < u.frist,
              'mitarbeiter', (select count(*) from urlaub.mitarbeiter m where m.umfrage_id = u.id),
              'abgegeben',   (select count(*) from urlaub.mitarbeiter m
                                join urlaub.abgaben a on a.mitarbeiter_id = m.id where m.umfrage_id = u.id))
-           order by (select f.jahr from urlaub.fragen f where f.umfrage_id = u.id and f.typ = 'urlaubswochen') desc nulls last, u.titel)
+           order by u.jahr desc, u.titel)
     from urlaub.umfragen u where u.organisator_id = v_uid), '[]'::jsonb);
 end;
 $$;
@@ -526,10 +565,10 @@ begin
     raise exception 'TITEL_LEER';
   end if;
   begin
-    insert into urlaub.umfragen (organisator_id, titel, frist)
-    values (v_uid, btrim(p_titel), make_timestamp(p_jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin')
+    insert into urlaub.umfragen (organisator_id, titel, jahr, bundesland, frist)
+    values (v_uid, btrim(p_titel), p_jahr, p_bundesland,
+            make_timestamp(p_jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin')
     returning id into v_id;
-    perform urlaub.standard_urlaubsfrage(v_id, p_jahr, p_bundesland);
   exception when check_violation or not_null_violation or data_exception then
     raise exception 'UNGUELTIGE_EINSTELLUNG';
   end;
@@ -562,23 +601,42 @@ declare
 begin
   return jsonb_build_object(
     'einstellungen', jsonb_build_object(
-      'id',            v_u.id,
-      'titel',         v_u.titel,
-      'frist',         v_u.frist,
-      'frist_eingabe', to_char(v_u.frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI'),
-      'offen',         now() < v_u.frist),
+      'id',                    v_u.id,
+      'titel',                 v_u.titel,
+      'jahr',                  v_u.jahr,
+      'bundesland',            v_u.bundesland,
+      'arbeitstage_pro_woche', v_u.arbeitstage_pro_woche,
+      'urlaubstage',           v_u.urlaubstage,
+      'min_wochen',            v_u.min_wochen,
+      'max_wochen',            v_u.max_wochen,
+      'max_am_stueck',         v_u.max_am_stueck,
+      'gesperrte_monate',      to_jsonb(v_u.gesperrte_monate),
+      'sperr_hinweis',         v_u.sperr_hinweis,
+      'frist',                 v_u.frist,
+      'frist_eingabe',         to_char(v_u.frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI'),
+      'offen',                 now() < v_u.frist,
+      'grunddaten_aenderbar',  not exists (select 1 from urlaub.mitarbeiter m
+                                            join urlaub.abgaben a on a.mitarbeiter_id = m.id
+                                            where m.umfrage_id = v_u.id)),
     'freie_tage', coalesce((
       select jsonb_agg(jsonb_build_object('datum', f.datum, 'name', f.name) order by f.datum)
       from urlaub.freie_tage f where f.umfrage_id = v_u.id), '[]'::jsonb),
     'mitarbeiter', coalesce((
       select jsonb_agg(jsonb_build_object(
-               'id',           m.id,
-               'name',         m.name,
-               'link',         v_basis || '#' || m.code,
-               'geaendert_am', a.geaendert_am) order by m.name)
+               'id',            m.id,
+               'name',          m.name,
+               'link',          v_basis || '#' || m.code,
+               'wochen',        coalesce(to_jsonb(a.wochen), '[]'::jsonb),
+               'urlaubstage',   (select coalesce(sum(k.arbeitstage), 0)::int
+                                   from urlaub.kalender(v_u.id) k where k.kw = any (a.wochen)),
+               'geaendert_am',  a.geaendert_am,
+               'regelverstoss', case when a.wochen is null then null
+                                     else urlaub.regelverstoss(v_u.id, a.wochen) end)
+             order by m.name)
       from urlaub.mitarbeiter m
       left join urlaub.abgaben a on a.mitarbeiter_id = m.id
-      where m.umfrage_id = v_u.id), '[]'::jsonb));
+      where m.umfrage_id = v_u.id), '[]'::jsonb),
+    'kalender', urlaub.kalender_json(v_u.id));
 end;
 $$;
 
@@ -591,9 +649,18 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_u     urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
-  v_frist text := btrim(p_daten ->> 'frist');
+  v_u      urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+  v_frist  text := btrim(p_daten ->> 'frist');
+  v_monate int[];
 begin
+  if exists (select 1 from urlaub.mitarbeiter m join urlaub.abgaben a on a.mitarbeiter_id = m.id
+             where m.umfrage_id = v_u.id)
+     and (   (p_daten ? 'jahr'       and (p_daten ->> 'jahr') is distinct from v_u.jahr::text)
+          or (p_daten ? 'bundesland' and (p_daten ->> 'bundesland') is distinct from v_u.bundesland)
+          or (p_daten ? 'arbeitstage_pro_woche'
+              and (p_daten ->> 'arbeitstage_pro_woche') is distinct from v_u.arbeitstage_pro_woche::text)) then
+    raise exception 'GRUNDDATEN_GESPERRT';
+  end if;
   if p_daten ? 'frist' and (v_frist is null or v_frist = '') then
     raise exception 'FRIST_LEER';
   end if;
@@ -601,12 +668,32 @@ begin
     raise exception 'UNGUELTIGE_EINSTELLUNG';
   end if;
   begin
+    if p_daten ? 'gesperrte_monate' then
+      select coalesce(array_agg(x::int order by x::int), '{}')
+      into v_monate from jsonb_array_elements_text(p_daten -> 'gesperrte_monate') x;
+    end if;
     update urlaub.umfragen set
-      titel = coalesce(btrim(p_daten ->> 'titel'), titel),
+      titel                 = coalesce(btrim(p_daten ->> 'titel'), titel),
+      jahr                  = coalesce((p_daten ->> 'jahr')::int, jahr),
+      bundesland            = coalesce(p_daten ->> 'bundesland', bundesland),
+      arbeitstage_pro_woche = coalesce((p_daten ->> 'arbeitstage_pro_woche')::int, arbeitstage_pro_woche),
+      urlaubstage           = coalesce((p_daten ->> 'urlaubstage')::int, urlaubstage),
+      min_wochen            = coalesce((p_daten ->> 'min_wochen')::int, min_wochen),
+      max_wochen            = coalesce((p_daten ->> 'max_wochen')::int, max_wochen),
+      max_am_stueck         = coalesce((p_daten ->> 'max_am_stueck')::int, max_am_stueck),
+      gesperrte_monate      = coalesce(v_monate, gesperrte_monate),
+      sperr_hinweis         = coalesce(btrim(p_daten ->> 'sperr_hinweis'), sperr_hinweis),
       frist = case
                 when v_frist is null
                   or to_char(frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI') = v_frist
-                then frist
+                then case
+                       -- Jahr gewechselt, Frist noch auf dem alten Standard: mit dem Jahr mitziehen
+                       when (p_daten ->> 'jahr') is not null
+                        and (p_daten ->> 'jahr')::int <> v_u.jahr
+                        and frist = make_timestamp(v_u.jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin'
+                       then make_timestamp((p_daten ->> 'jahr')::int - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin'
+                       else frist
+                     end
                 else v_frist::timestamp at time zone 'Europe/Berlin'
               end
     where id = v_u.id;
@@ -625,9 +712,7 @@ as $$
 declare
   v_u urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
 begin
-  if p_datum is null
-     or ((urlaub.urlaubsfrage(v_u.id)).jahr is not null
-         and extract(year from p_datum) <> (urlaub.urlaubsfrage(v_u.id)).jahr) then
+  if p_datum is null or extract(year from p_datum) <> v_u.jahr then
     raise exception 'DATUM_FALSCHES_JAHR';
   end if;
   if p_name is null or btrim(p_name) = '' then

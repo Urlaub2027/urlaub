@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 export const SCHEMA = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
-export const SCHEMA_V1 = readFileSync(new URL('./fixtures/schema-v1.sql', import.meta.url), 'utf8');
+export const SCHEMA_V2 = readFileSync(new URL('./fixtures/schema-v2.sql', import.meta.url), 'utf8');
 
 export async function neueDatenbank({ schema = true } = {}) {
   const db = new PGlite();
@@ -57,8 +57,15 @@ export async function organisator(db, benutzername, { hauptadmin = false, gesper
 export async function umfrageAnlegen(db, organisatorId,
   { titel = 'Urlaubswünsche 2027', jahr = 2027, bundesland = 'BY', frist = "now() + interval '1 day'" } = {}) {
   const r = await db.query(
-    `insert into urlaub.umfragen (organisator_id, titel, jahr, bundesland, frist)
-     values ($1, $2, $3, $4, ${frist}) returning id`, [organisatorId, titel, jahr, bundesland]);
+    `insert into urlaub.umfragen (organisator_id, titel, frist) values ($1, $2, ${frist}) returning id`,
+    [organisatorId, titel]);
+  const id = r.rows[0].id;
+  await db.query('select urlaub.standard_urlaubsfrage($1, $2, $3)', [id, jahr, bundesland]);
+  return id;
+}
+
+export async function urlaubsfrageId(db, umfrageId) {
+  const r = await db.query("select id from urlaub.fragen where umfrage_id = $1 and typ = 'urlaubswochen'", [umfrageId]);
   return r.rows[0].id;
 }
 
