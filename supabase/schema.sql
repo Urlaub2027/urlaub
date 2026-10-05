@@ -249,7 +249,140 @@ alter table urlaub.mitarbeiter   enable row level security;
 alter table urlaub.abgaben       enable row level security;
 
 -- ---------------------------------------------------------------------------
--- (Task 2–4 fügen hier Funktionen ein)
+-- Regeln und Mitarbeiter-Funktionen
+-- ---------------------------------------------------------------------------
+
+-- Erster Regelverstoß einer Auswahl als Fehlercode, sonst null.
+create or replace function urlaub.regelverstoss(p_umfrage_id bigint, p_wochen int[])
+returns text
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_u       urlaub.umfragen;
+  v_erlaubt int[];
+  v_wochen  int[];
+  v_stueck  int;
+  v_tage    int;
+begin
+  select * into strict v_u from urlaub.umfragen where id = p_umfrage_id;
+  if p_wochen is null or cardinality(p_wochen) = 0 then
+    return 'KEINE_WOCHE';
+  end if;
+  select array_agg(k.kw) into v_erlaubt from urlaub.kalender(p_umfrage_id) k where not k.gesperrt;
+  if exists (select 1 from unnest(p_wochen) x where x is null or not (x = any (v_erlaubt))) then
+    return 'UNGUELTIGE_WOCHE';
+  end if;
+  select array_agg(distinct x order by x) into v_wochen from unnest(p_wochen) x;
+  if cardinality(v_wochen) <> cardinality(p_wochen) then
+    return 'DOPPELTE_WOCHE';
+  end if;
+  if cardinality(v_wochen) < v_u.min_wochen then
+    return 'ZU_WENIGE_WOCHEN';
+  end if;
+  if cardinality(v_wochen) > v_u.max_wochen then
+    return 'ZU_VIELE_WOCHEN';
+  end if;
+  -- längste Folge aufeinanderfolgender KWs
+  select max(n) into v_stueck
+  from (select count(*) as n
+        from (select x - row_number() over (order by x) as gruppe from unnest(v_wochen) x) s
+        group by gruppe) t;
+  if v_stueck > v_u.max_am_stueck then
+    return 'ZU_VIELE_AM_STUECK';
+  end if;
+  select sum(k.arbeitstage) into v_tage from urlaub.kalender(p_umfrage_id) k where k.kw = any (v_wochen);
+  if v_tage > v_u.urlaubstage then
+    return 'ZU_VIELE_TAGE';
+  end if;
+  return null;
+end;
+$$;
+
+-- Antwort an die Mitarbeiter-Seite: nur Daten dieser Person und ihrer Umfrage.
+create or replace function urlaub.antwort(p_mitarbeiter_id bigint)
+returns jsonb
+language sql stable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'name',                  m.name,
+    'titel',                 u.titel,
+    'jahr',                  u.jahr,
+    'wochen',                coalesce(to_jsonb(a.wochen), '[]'::jsonb),
+    'geaendert_am',          a.geaendert_am,
+    'frist',                 u.frist,
+    'offen',                 now() < u.frist,
+    'min_wochen',            u.min_wochen,
+    'max_wochen',            u.max_wochen,
+    'max_am_stueck',         u.max_am_stueck,
+    'urlaubstage',           u.urlaubstage,
+    'arbeitstage_pro_woche', u.arbeitstage_pro_woche,
+    'sperr_hinweis',         u.sperr_hinweis,
+    'kalender',              urlaub.kalender_json(u.id))
+  from urlaub.mitarbeiter m
+  join urlaub.umfragen u on u.id = m.umfrage_id
+  left join urlaub.abgaben a on a.mitarbeiter_id = m.id
+  where m.id = p_mitarbeiter_id
+$$;
+
+create or replace function public.urlaub_laden(p_code text)
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_id bigint;
+begin
+  select id into v_id from urlaub.mitarbeiter where code = p_code;
+  if v_id is null then
+    raise exception 'LINK_UNGUELTIG';
+  end if;
+  return urlaub.antwort(v_id);
+end;
+$$;
+
+create or replace function public.urlaub_speichern(p_code text, p_wochen int[])
+returns jsonb
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_m      urlaub.mitarbeiter;
+  v_frist  timestamptz;
+  v_fehler text;
+  v_wochen int[];
+begin
+  select * into v_m from urlaub.mitarbeiter where code = p_code;
+  if not found then
+    raise exception 'LINK_UNGUELTIG';
+  end if;
+  select frist into v_frist from urlaub.umfragen where id = v_m.umfrage_id;
+  if now() >= v_frist then
+    raise exception 'FRIST_ABGELAUFEN';
+  end if;
+  v_fehler := urlaub.regelverstoss(v_m.umfrage_id, p_wochen);
+  if v_fehler is not null then
+    raise exception '%', v_fehler;
+  end if;
+  select array_agg(x order by x) into v_wochen from unnest(p_wochen) x;
+  insert into urlaub.abgaben (mitarbeiter_id, wochen, geaendert_am)
+  values (v_m.id, v_wochen, now())
+  on conflict (mitarbeiter_id)
+  do update set wochen = excluded.wochen, geaendert_am = excluded.geaendert_am;
+  return urlaub.antwort(v_m.id);
+end;
+$$;
+
+revoke all on function public.urlaub_laden(text)            from public, anon, authenticated;
+revoke all on function public.urlaub_speichern(text, int[]) from public, anon, authenticated;
+grant execute on function public.urlaub_laden(text)            to anon;
+grant execute on function public.urlaub_speichern(text, int[]) to anon;
+
+-- ---------------------------------------------------------------------------
+-- (Task 3–4 fügen hier weitere Funktionen ein)
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
