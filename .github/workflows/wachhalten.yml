@@ -1,0 +1,38 @@
+# Hält die kostenlose Supabase-Datenbank wach: Supabase pausiert Projekte nach etwa
+# 7 Tagen ohne Datenbank-Aktivität. Täglich ein Lebenszeichen (schreibt nur einen
+# Zeitstempel, siehe public.lebenszeichen in supabase/schema.sql). Schlägt der Aufruf
+# fehl, meldet GitHub das per E-Mail. URL und öffentlicher Schlüssel kommen aus docs/config.js.
+name: Datenbank wachhalten
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  lebenszeichen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lebenszeichen an Supabase senden
+        run: |
+          URL=$(grep -oP "SUPABASE_URL = '\K[^']+" docs/config.js)
+          KEY=$(grep -oP "SUPABASE_KEY = '\K[^']+" docs/config.js)
+          # Alte "anon"-Schlüssel (JWT) zusätzlich als Bearer, wie docs/api.js
+          AUTH=()
+          case "$KEY" in eyJ*) AUTH=(-H "Authorization: Bearer $KEY") ;; esac
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            -X POST "$URL/rest/v1/rpc/lebenszeichen" \
+            -H "apikey: $KEY" -H "Content-Type: application/json" "${AUTH[@]}" -d '{}'
+      # GitHub schaltet Zeitpläne öffentlicher Repos nach 60 Tagen ohne Repo-Aktivität ab.
+      # Ob dieser Aufruf das verhindert, ist nicht belegt; die Verwaltung warnt zusätzlich.
+      - name: Zeitplan aktiv halten
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/wachhalten.yml/enable"

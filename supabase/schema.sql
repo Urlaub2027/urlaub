@@ -173,6 +173,12 @@ create table if not exists urlaub.antwort_optionen (
 );
 create index if not exists antwort_optionen_option on urlaub.antwort_optionen (option_id);
 
+-- Eine Zeile: Zeitpunkt des letzten Lebenszeichens der Wach-Automatik (siehe public.lebenszeichen).
+create table if not exists urlaub.lebenszeichen (
+  id   boolean primary key default true check (id),
+  zeit timestamptz not null default now()
+);
+
 insert into urlaub.app (link_basis) values ('https://urlaub2027.github.io/urlaub/')
 on conflict (id) do nothing;
 
@@ -414,6 +420,7 @@ alter table urlaub.regeln           enable row level security;
 alter table urlaub.bedingungen      enable row level security;
 alter table urlaub.antworten        enable row level security;
 alter table urlaub.antwort_optionen enable row level security;
+alter table urlaub.lebenszeichen    enable row level security;
 
 -- ---------------------------------------------------------------------------
 -- Mitarbeiter-Funktionen: Antworten prüfen und absenden
@@ -2117,6 +2124,42 @@ grant execute on function public.einladung_pruefen(text)           to anon, auth
 grant execute on function public.org_einladung_erstellen()         to authenticated;
 grant execute on function public.haupt_organisatoren()             to authenticated;
 grant execute on function public.haupt_sperren(uuid, boolean)      to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Betrieb: Lebenszeichen
+-- ---------------------------------------------------------------------------
+-- Supabase pausiert kostenlose Projekte nach etwa 7 Tagen ohne Datenbank-Aktivität
+-- (reine Lesezugriffe zählen laut Berichten nicht). Der GitHub-Zeitplan
+-- .github/workflows/wachhalten.yml ruft deshalb täglich lebenszeichen() auf. Es schreibt
+-- nur diesen Zeitstempel, höchstens einmal pro Minute.
+
+create or replace function public.lebenszeichen()
+returns void
+language sql volatile
+security definer
+set search_path = ''
+as $$
+  insert into urlaub.lebenszeichen (id, zeit) values (true, now())
+  on conflict (id) do update set zeit = excluded.zeit
+  where urlaub.lebenszeichen.zeit < now() - interval '1 minute'
+$$;
+
+create or replace function public.org_lebenszeichen()
+returns timestamptz
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform urlaub.ich();
+  return (select zeit from urlaub.lebenszeichen);
+end;
+$$;
+
+revoke all on function public.lebenszeichen()     from public, anon, authenticated;
+revoke all on function public.org_lebenszeichen() from public, anon, authenticated;
+grant execute on function public.lebenszeichen()     to anon;
+grant execute on function public.org_lebenszeichen() to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Rechte zum Schluss
