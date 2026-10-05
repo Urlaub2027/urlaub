@@ -967,8 +967,10 @@ begin
 end;
 $$;
 
--- Vorgabe-Frist: 30.11. des Vorjahres, 23:59:59 deutscher Zeit.
-create or replace function public.org_umfrage_anlegen(p_titel text, p_jahr int, p_bundesland text)
+-- Neue Umfrage nach Vorlage (siehe urlaub.vorlage_anwenden). Vorgabe-Frist: bei
+-- 'urlaub' der 30.11. des Vorjahres, sonst heute in 14 Tagen; jeweils 23:59:59 deutscher Zeit.
+-- Jahr und Bundesland zählen nur bei 'urlaub'.
+create or replace function public.org_umfrage_anlegen(p_titel text, p_vorlage text, p_jahr int, p_bundesland text)
 returns bigint
 language plpgsql volatile
 security definer
@@ -981,16 +983,33 @@ begin
   if p_titel is null or btrim(p_titel) = '' then
     raise exception 'TITEL_LEER';
   end if;
+  if p_vorlage is null or p_vorlage not in ('urlaub', 'leer', 'schicht', 'feier') then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
   begin
     insert into urlaub.umfragen (organisator_id, titel, frist)
-    values (v_uid, btrim(p_titel), make_timestamp(p_jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin')
+    values (v_uid, btrim(p_titel),
+            case when p_vorlage = 'urlaub'
+                 then make_timestamp(p_jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin'
+                 else (date_trunc('day', now() at time zone 'Europe/Berlin') + interval '14 days 23:59:59')
+                      at time zone 'Europe/Berlin' end)
     returning id into v_id;
-    perform urlaub.standard_urlaubsfrage(v_id, p_jahr, p_bundesland);
+    perform urlaub.vorlage_anwenden(v_id, p_vorlage, p_jahr, p_bundesland);
   exception when check_violation or not_null_violation or data_exception then
     raise exception 'UNGUELTIGE_EINSTELLUNG';
   end;
   return v_id;
 end;
+$$;
+
+-- Fassung von vor den Vorlagen (ältere Seiten): legt immer „Urlaubswünsche“ an.
+create or replace function public.org_umfrage_anlegen(p_titel text, p_jahr int, p_bundesland text)
+returns bigint
+language sql volatile
+security definer
+set search_path = ''
+as $$
+  select public.org_umfrage_anlegen(p_titel, 'urlaub', p_jahr, p_bundesland)
 $$;
 
 create or replace function public.org_umfrage_loeschen(p_umfrage_id bigint)
@@ -1170,6 +1189,7 @@ $$;
 revoke all on function public.org_ich()                                        from public, anon, authenticated;
 revoke all on function public.org_umfragen()                                   from public, anon, authenticated;
 revoke all on function public.org_umfrage_anlegen(text, int, text)             from public, anon, authenticated;
+revoke all on function public.org_umfrage_anlegen(text, text, int, text)       from public, anon, authenticated;
 revoke all on function public.org_umfrage_loeschen(bigint)                     from public, anon, authenticated;
 revoke all on function public.org_umfrage(bigint)                              from public, anon, authenticated;
 revoke all on function public.org_umfrage_speichern(bigint, jsonb)             from public, anon, authenticated;
@@ -1181,6 +1201,7 @@ revoke all on function public.org_link_erneuern(bigint)                        f
 grant execute on function public.org_ich()                                      to authenticated;
 grant execute on function public.org_umfragen()                                 to authenticated;
 grant execute on function public.org_umfrage_anlegen(text, int, text)           to authenticated;
+grant execute on function public.org_umfrage_anlegen(text, text, int, text)     to authenticated;
 grant execute on function public.org_umfrage_loeschen(bigint)                   to authenticated;
 grant execute on function public.org_umfrage(bigint)                            to authenticated;
 grant execute on function public.org_umfrage_speichern(bigint, jsonb)           to authenticated;
@@ -1940,6 +1961,110 @@ grant execute on function public.org_bedingung_speichern(bigint, text, jsonb)   
 grant execute on function public.org_bedingung_schalten(bigint, boolean)            to authenticated;
 grant execute on function public.org_bedingung_loeschen(bigint)                     to authenticated;
 grant execute on function public.org_umfrage_kopieren(bigint)                       to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Vorlagen für neue Umfragen
+-- ---------------------------------------------------------------------------
+
+-- Hängt eine eingeschaltete Frage an (Skala 1–5). Regelwerte laufen durch dieselben
+-- Prüfungen wie im Editor (erlaubte_regeln, regelwert).
+create or replace function urlaub.vorlage_frage(p_umfrage_id bigint, p_typ text, p_text text,
+                                                p_hilfetext text default '', p_optionen text[] default '{}',
+                                                p_regeln jsonb default '{}')
+returns bigint
+language plpgsql volatile
+set search_path = ''
+as $$
+declare
+  v_id   bigint;
+  v_art  text;
+  v_wert jsonb;
+begin
+  insert into urlaub.fragen (umfrage_id, position, typ, text, hilfetext, skala_von, skala_bis)
+  values (p_umfrage_id,
+          coalesce((select max(position) from urlaub.fragen where umfrage_id = p_umfrage_id), 0) + 1,
+          p_typ, p_text, p_hilfetext,
+          case when p_typ = 'skala' then 1 end,
+          case when p_typ = 'skala' then 5 end)
+  returning id into v_id;
+  insert into urlaub.optionen (frage_id, position, text)
+  select v_id, o.n, o.text from unnest(p_optionen) with ordinality as o (text, n);
+  for v_art, v_wert in select key, value from jsonb_each(p_regeln) loop
+    if not (v_art = any (urlaub.erlaubte_regeln(p_typ))) then
+      raise exception 'REGEL_UNPASSEND';
+    end if;
+    insert into urlaub.regeln (frage_id, art, wert) values (v_id, v_art, urlaub.regelwert(v_art, v_wert));
+  end loop;
+  return v_id;
+end;
+$$;
+
+-- Sichtbarkeits-Bedingung, geprüft wie im Editor (urlaub.bedingung_werte).
+create or replace function urlaub.vorlage_bedingung(p_frage_id bigint, p_quelle_id bigint, p_operator text, p_werte jsonb)
+returns void
+language plpgsql volatile
+set search_path = ''
+as $$
+declare
+  v_f urlaub.fragen;
+begin
+  select * into v_f from urlaub.fragen where id = p_frage_id;
+  insert into urlaub.bedingungen (frage_id, quelle_id, operator, werte)
+  values (p_frage_id, p_quelle_id, p_operator, urlaub.bedingung_werte(v_f, p_quelle_id, p_operator, p_werte));
+end;
+$$;
+
+-- Füllt eine frisch angelegte Umfrage: 'urlaub' (Urlaubswochen mit Standard-Regeln),
+-- 'leer', 'schicht' (Schicht- und Verfügbarkeitswünsche), 'feier' (Weihnachtsfeier).
+-- Bewusst keine Frage nach Allergien: Gesundheitsdaten (DSGVO Art. 9), Antworten sind nicht anonym.
+create or replace function urlaub.vorlage_anwenden(p_umfrage_id bigint, p_vorlage text, p_jahr int, p_bundesland text)
+returns void
+language plpgsql volatile
+set search_path = ''
+as $$
+declare
+  v_kommt bigint;
+begin
+  case p_vorlage
+  when 'urlaub' then
+    perform urlaub.standard_urlaubsfrage(p_umfrage_id, p_jahr, p_bundesland);
+  when 'leer' then
+    null;
+  when 'schicht' then
+    perform urlaub.vorlage_frage(p_umfrage_id, 'hinweis',
+      'Bitte gib an, wann du arbeiten kannst und was du bevorzugst.',
+      'Es sind Wünsche – wir berücksichtigen sie, so gut es geht.');
+    perform urlaub.vorlage_frage(p_umfrage_id, 'mehrfach', 'An welchen Tagen kannst du arbeiten?', '',
+      array['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'],
+      '{"pflicht": null, "min_anzahl": 1}');
+    perform urlaub.vorlage_frage(p_umfrage_id, 'einfach', 'Welche Schicht ist dir am liebsten?', '',
+      array['Frühschicht', 'Spätschicht', 'Nachtschicht', 'Egal'], '{"pflicht": null}');
+    perform urlaub.vorlage_frage(p_umfrage_id, 'zahl', 'Wie viele Tage pro Woche möchtest du arbeiten?', '',
+      '{}', '{"pflicht": null, "min_zahl": 1, "max_zahl": 6}');
+    perform urlaub.vorlage_frage(p_umfrage_id, 'janein', 'Kannst du bei Bedarf kurzfristig einspringen?', '',
+      '{}', '{"pflicht": null}');
+    perform urlaub.vorlage_frage(p_umfrage_id, 'text_lang', 'Gibt es Zeiten, in denen du nicht arbeiten kannst?',
+      'Zum Beispiel Schule, Kinderbetreuung oder ein fester Termin.', '{}', '{"max_zeichen": 500}');
+  when 'feier' then
+    v_kommt := urlaub.vorlage_frage(p_umfrage_id, 'janein', 'Möchtest du zur Weihnachtsfeier kommen?', '',
+      '{}', '{"pflicht": null}');
+    perform urlaub.vorlage_bedingung(urlaub.vorlage_frage(p_umfrage_id, 'mehrfach', 'An welchen Terminen kannst du?',
+      'Kreuze alle Termine an, an denen du kannst.', array['Termin 1', 'Termin 2', 'Termin 3'], '{"pflicht": null}'),
+      v_kommt, 'ist', 'true');
+    perform urlaub.vorlage_bedingung(urlaub.vorlage_frage(p_umfrage_id, 'einfach', 'Was möchtest du essen?', '',
+      array['Mit Fleisch', 'Vegetarisch', 'Vegan'], '{"pflicht": null}'),
+      v_kommt, 'ist', 'true');
+    perform urlaub.vorlage_bedingung(urlaub.vorlage_frage(p_umfrage_id, 'janein', 'Bringst du eine Begleitung mit?', '',
+      '{}', '{"pflicht": null}'),
+      v_kommt, 'ist', 'true');
+    perform urlaub.vorlage_bedingung(urlaub.vorlage_frage(p_umfrage_id, 'text_lang',
+      'Hast du noch Wünsche oder Ideen für die Feier?', '', '{}', '{"max_zeichen": 500}'),
+      v_kommt, 'ist', 'true');
+  else
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end case;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Einladungen und Registrierung
