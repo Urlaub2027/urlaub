@@ -406,14 +406,411 @@ alter table urlaub.antworten        enable row level security;
 alter table urlaub.antwort_optionen enable row level security;
 
 -- ---------------------------------------------------------------------------
--- Mitarbeiter-Funktionen: siehe Task 2 (Prüfung und Absenden).
+-- Mitarbeiter-Funktionen: Antworten prüfen und absenden
 -- ---------------------------------------------------------------------------
 
 -- Stand 2 → 3: alte Wochen-Funktionen entfernen (auch bei Neuinstallation harmlos).
 drop function if exists public.urlaub_speichern(text, int[]);
-drop function if exists public.urlaub_laden(text);
 drop function if exists urlaub.regelverstoss(bigint, int[]);
 drop function if exists urlaub.antwort(bigint);
+
+-- Leer = nicht beantwortet: fehlt, JSON-null, leere Liste, leerer Text.
+create or replace function urlaub.ist_leer(p_wert jsonb)
+returns boolean
+language sql immutable
+set search_path = ''
+as $$
+  select p_wert is null
+      or jsonb_typeof(p_wert) = 'null'
+      or (jsonb_typeof(p_wert) = 'array' and jsonb_array_length(p_wert) = 0)
+      or (jsonb_typeof(p_wert) = 'string' and btrim(p_wert #>> '{}') = '')
+$$;
+
+-- Bedingung erfüllt? Es zählen nur bereits geprüfte Antworten (p_gueltig) von Fragen,
+-- die selbst sichtbar sind (p_sichtbar). Unbeantwortet oder unsichtbar = nicht erfüllt.
+create or replace function urlaub.bedingung_erfuellt(p_b urlaub.bedingungen, p_gueltig jsonb, p_sichtbar bigint[])
+returns boolean
+language plpgsql immutable
+set search_path = ''
+as $$
+declare
+  v jsonb := p_gueltig -> p_b.quelle_id::text;
+begin
+  if not (p_b.quelle_id = any (p_sichtbar)) or urlaub.ist_leer(v) then
+    return false;
+  end if;
+  if p_b.operator in ('enthaelt_eine_von', 'enthaelt_keine_von') and jsonb_typeof(v) <> 'array' then
+    return false;
+  end if;
+  if p_b.operator in ('gleich', 'groesser', 'kleiner')
+     and (jsonb_typeof(v) <> 'number' or jsonb_typeof(p_b.werte) <> 'number') then
+    return false;
+  end if;
+  return case p_b.operator
+    when 'ist_eine_von'       then jsonb_typeof(p_b.werte) = 'array' and p_b.werte @> jsonb_build_array(v)
+    when 'ist_keine_von'      then jsonb_typeof(p_b.werte) = 'array' and not (p_b.werte @> jsonb_build_array(v))
+    when 'enthaelt_eine_von'  then exists (select 1 from jsonb_array_elements(v) e where p_b.werte @> jsonb_build_array(e))
+    when 'enthaelt_keine_von' then not exists (select 1 from jsonb_array_elements(v) e where p_b.werte @> jsonb_build_array(e))
+    when 'ist'                then v = p_b.werte
+    when 'gleich'             then (v #>> '{}')::numeric = (p_b.werte #>> '{}')::numeric
+    when 'groesser'           then (v #>> '{}')::numeric > (p_b.werte #>> '{}')::numeric
+    when 'kleiner'            then (v #>> '{}')::numeric < (p_b.werte #>> '{}')::numeric
+    else false
+  end;
+end;
+$$;
+
+-- Wochenregeln der Urlaubswochen-Frage; nur eingeschaltete Regeln zählen.
+create or replace function urlaub.wochen_verstoss(p_frage urlaub.fragen, p_wochen jsonb)
+returns text
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_regel   jsonb := (select coalesce(jsonb_object_agg(r.art, r.wert), '{}'::jsonb)
+                      from urlaub.regeln r where r.frage_id = p_frage.id and r.aktiv);
+  v_liste   int[];
+  v_erlaubt int[];
+  v_stueck  int;
+  v_tage    int;
+begin
+  if jsonb_typeof(p_wochen) <> 'array'
+     or exists (select 1 from jsonb_array_elements(p_wochen) e
+                where jsonb_typeof(e) <> 'number'
+                   or abs((e #>> '{}')::numeric) > 100
+                   or (e #>> '{}')::numeric <> trunc((e #>> '{}')::numeric)) then
+    return 'UNGUELTIGE_WOCHE';
+  end if;
+  select array_agg((e #>> '{}')::int) into v_liste from jsonb_array_elements(p_wochen) e;
+  select coalesce(array_agg(k.kw), '{}') into v_erlaubt from urlaub.kalender(p_frage.umfrage_id) k where not k.gesperrt;
+  if exists (select 1 from unnest(v_liste) x where not (x = any (v_erlaubt))) then
+    return 'UNGUELTIGE_WOCHE';
+  end if;
+  if (select count(distinct x) from unnest(v_liste) x) <> cardinality(v_liste) then
+    return 'DOPPELTE_WOCHE';
+  end if;
+  if v_regel ? 'min_wochen' and cardinality(v_liste) < (v_regel ->> 'min_wochen')::int then
+    return 'ZU_WENIGE_WOCHEN';
+  end if;
+  if v_regel ? 'max_wochen' and cardinality(v_liste) > (v_regel ->> 'max_wochen')::int then
+    return 'ZU_VIELE_WOCHEN';
+  end if;
+  if v_regel ? 'max_am_stueck' then
+    select max(n) into v_stueck
+    from (select count(*) as n
+          from (select x - row_number() over (order by x) as gruppe from unnest(v_liste) x) s
+          group by gruppe) t;
+    if v_stueck > (v_regel ->> 'max_am_stueck')::int then
+      return 'ZU_VIELE_AM_STUECK';
+    end if;
+  end if;
+  if v_regel ? 'max_urlaubstage' then
+    select coalesce(sum(k.arbeitstage), 0) into v_tage from urlaub.kalender(p_frage.umfrage_id) k where k.kw = any (v_liste);
+    if v_tage > (v_regel ->> 'max_urlaubstage')::int then
+      return 'ZU_VIELE_TAGE';
+    end if;
+  end if;
+  return null;
+end;
+$$;
+
+-- Erster Verstoß einer (nicht leeren) Antwort gegen Typ und eingeschaltete Regeln, sonst null.
+create or replace function urlaub.antwort_verstoss(p_frage urlaub.fragen, p_wert jsonb)
+returns text
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_regel jsonb := (select coalesce(jsonb_object_agg(r.art, r.wert), '{}'::jsonb)
+                    from urlaub.regeln r where r.frage_id = p_frage.id and r.aktiv);
+  v_typ   text := jsonb_typeof(p_wert);
+  v_zahl  numeric;
+  v_text  text;
+  v_datum date;
+begin
+  case p_frage.typ
+  when 'urlaubswochen' then
+    return urlaub.wochen_verstoss(p_frage, p_wert);
+  when 'einfach' then
+    if v_typ <> 'number' or not exists (select 1 from urlaub.optionen o
+         where o.frage_id = p_frage.id and o.aktiv and o.id::numeric = (p_wert #>> '{}')::numeric) then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+  when 'mehrfach' then
+    if v_typ <> 'array'
+       or exists (select 1 from jsonb_array_elements(p_wert) e
+                  where jsonb_typeof(e) <> 'number'
+                     or not exists (select 1 from urlaub.optionen o
+                                    where o.frage_id = p_frage.id and o.aktiv and o.id::numeric = (e #>> '{}')::numeric))
+       or (select count(distinct (e #>> '{}')::numeric) from jsonb_array_elements(p_wert) e) <> jsonb_array_length(p_wert) then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+    if v_regel ? 'min_anzahl' and jsonb_array_length(p_wert) < (v_regel ->> 'min_anzahl')::int then
+      return 'ZU_WENIGE_ANTWORTEN';
+    end if;
+    if v_regel ? 'max_anzahl' and jsonb_array_length(p_wert) > (v_regel ->> 'max_anzahl')::int then
+      return 'ZU_VIELE_ANTWORTEN';
+    end if;
+  when 'janein' then
+    if v_typ <> 'boolean' then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+  when 'skala' then
+    if v_typ <> 'number' then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+    v_zahl := (p_wert #>> '{}')::numeric;
+    if v_zahl <> trunc(v_zahl) or v_zahl < p_frage.skala_von or v_zahl > p_frage.skala_bis then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+  when 'zahl' then
+    if v_typ <> 'number' then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+    v_zahl := (p_wert #>> '{}')::numeric;
+    if abs(v_zahl) >= 1e12 then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+    if v_regel ? 'min_zahl' and v_zahl < (v_regel ->> 'min_zahl')::numeric then
+      return 'ZAHL_ZU_KLEIN';
+    end if;
+    if v_regel ? 'max_zahl' and v_zahl > (v_regel ->> 'max_zahl')::numeric then
+      return 'ZAHL_ZU_GROSS';
+    end if;
+  when 'text_kurz', 'text_lang' then
+    if v_typ <> 'string' then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+    v_text := btrim(p_wert #>> '{}');
+    if char_length(v_text) > (case p_frage.typ when 'text_kurz' then 200 else 5000 end)
+       or (v_regel ? 'max_zeichen' and char_length(v_text) > (v_regel ->> 'max_zeichen')::int) then
+      return 'TEXT_ZU_LANG';
+    end if;
+  when 'datum' then
+    if v_typ <> 'string' or (p_wert #>> '{}') !~ '^\d{4}-\d{2}-\d{2}$' then
+      return 'UNGUELTIGE_ANTWORT';
+    end if;
+    begin
+      v_datum := (p_wert #>> '{}')::date;
+    exception when data_exception then
+      return 'UNGUELTIGE_ANTWORT';
+    end;
+    if v_regel ? 'fruehestens' and v_datum < (v_regel ->> 'fruehestens')::date then
+      return 'DATUM_ZU_FRUEH';
+    end if;
+    if v_regel ? 'spaetestens' and v_datum > (v_regel ->> 'spaetestens')::date then
+      return 'DATUM_ZU_SPAET';
+    end if;
+  else
+    return null;
+  end case;
+  return null;
+end;
+$$;
+
+-- Gespeicherte Form: Listen sortiert, Options-IDs ganzzahlig, Texte getrimmt.
+create or replace function urlaub.antwort_normalisiert(p_frage urlaub.fragen, p_wert jsonb)
+returns jsonb
+language sql immutable
+set search_path = ''
+as $$
+  select case
+    when p_frage.typ in ('urlaubswochen', 'mehrfach') then
+      (select jsonb_agg(to_jsonb(((e #>> '{}')::numeric)::bigint) order by (e #>> '{}')::numeric)
+       from jsonb_array_elements(p_wert) e)
+    when p_frage.typ = 'einfach' then to_jsonb(((p_wert #>> '{}')::numeric)::bigint)
+    when p_frage.typ in ('text_kurz', 'text_lang') then to_jsonb(btrim(p_wert #>> '{}'))
+    else p_wert
+  end
+$$;
+
+-- Prüft alle Antworten einer Abgabe in Fragenreihenfolge. Nur eingeschaltete Fragen;
+-- Sichtbarkeit aus den bereits geprüften Antworten früherer Fragen.
+create or replace function urlaub.pruefe_antworten(p_umfrage_id bigint, p_antworten jsonb)
+returns jsonb
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_f        urlaub.fragen;
+  v_eingabe  jsonb := case when jsonb_typeof(p_antworten) = 'object' then p_antworten else '{}'::jsonb end;
+  v_wert     jsonb;
+  v_code     text;
+  v_gueltig  jsonb := '{}';
+  v_fehler   jsonb := '{}';
+  v_sichtbar bigint[] := '{}';
+  v_anzahl   int;
+  v_erfuellt boolean;
+begin
+  for v_f in select * from urlaub.fragen where umfrage_id = p_umfrage_id and aktiv order by position, id loop
+    select count(*),
+           case v_f.verknuepfung
+             when 'oder' then bool_or(urlaub.bedingung_erfuellt(b, v_gueltig, v_sichtbar))
+             else bool_and(urlaub.bedingung_erfuellt(b, v_gueltig, v_sichtbar))
+           end
+      into v_anzahl, v_erfuellt
+      from urlaub.bedingungen b where b.frage_id = v_f.id and b.aktiv;
+    if v_anzahl > 0 and not v_erfuellt then
+      continue;
+    end if;
+    v_sichtbar := v_sichtbar || v_f.id;
+    if v_f.typ = 'hinweis' then
+      continue;
+    end if;
+    v_wert := v_eingabe -> v_f.id::text;
+    if urlaub.ist_leer(v_wert) then
+      if exists (select 1 from urlaub.regeln r where r.frage_id = v_f.id and r.art = 'pflicht' and r.aktiv) then
+        v_fehler := v_fehler || jsonb_build_object(v_f.id::text, 'PFLICHT');
+      end if;
+      continue;
+    end if;
+    v_code := urlaub.antwort_verstoss(v_f, v_wert);
+    if v_code is null then
+      v_gueltig := v_gueltig || jsonb_build_object(v_f.id::text, urlaub.antwort_normalisiert(v_f, v_wert));
+    else
+      v_fehler := v_fehler || jsonb_build_object(v_f.id::text, v_code);
+    end if;
+  end loop;
+  return jsonb_build_object('sichtbar', to_jsonb(v_sichtbar), 'antworten', v_gueltig, 'fehler', v_fehler);
+end;
+$$;
+
+-- Eine Frage als JSON. p_alles=false: Mitarbeiter-Sicht (nur Eingeschaltetes);
+-- p_alles=true: Verwaltungs-Sicht (alles mit Schaltern und Hinweis auf vorhandene Antworten).
+create or replace function urlaub.frage_json(p_f urlaub.fragen, p_alles boolean)
+returns jsonb
+language sql stable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'id',           p_f.id,
+    'typ',          p_f.typ,
+    'text',         p_f.text,
+    'hilfetext',    p_f.hilfetext,
+    'position',     p_f.position,
+    'verknuepfung', p_f.verknuepfung,
+    'optionen', coalesce((
+      select jsonb_agg(case when p_alles
+                         then jsonb_build_object('id', o.id, 'text', o.text, 'aktiv', o.aktiv, 'position', o.position,
+                                'hat_antworten', exists (select 1 from urlaub.antwort_optionen ao where ao.option_id = o.id))
+                         else jsonb_build_object('id', o.id, 'text', o.text) end
+                       order by o.position, o.id)
+      from urlaub.optionen o where o.frage_id = p_f.id and (p_alles or o.aktiv)), '[]'::jsonb),
+    'regeln', case when p_alles
+      then coalesce((select jsonb_object_agg(r.art, jsonb_build_object('wert', r.wert, 'aktiv', r.aktiv))
+                     from urlaub.regeln r where r.frage_id = p_f.id), '{}'::jsonb)
+      else coalesce((select jsonb_object_agg(r.art, r.wert)
+                     from urlaub.regeln r where r.frage_id = p_f.id and r.aktiv), '{}'::jsonb) end,
+    'bedingungen', coalesce((
+      select jsonb_agg(case when p_alles
+                         then jsonb_build_object('id', b.id, 'quelle_id', b.quelle_id, 'operator', b.operator,
+                                                 'werte', b.werte, 'aktiv', b.aktiv)
+                         else jsonb_build_object('quelle_id', b.quelle_id, 'operator', b.operator, 'werte', b.werte) end
+                       order by b.id)
+      from urlaub.bedingungen b where b.frage_id = p_f.id and (p_alles or b.aktiv)), '[]'::jsonb),
+    'skala', case when p_f.typ = 'skala'
+      then jsonb_build_object('von', p_f.skala_von, 'bis', p_f.skala_bis, 'links', p_f.skala_links, 'rechts', p_f.skala_rechts) end,
+    'urlaubswochen', case when p_f.typ = 'urlaubswochen'
+      then jsonb_build_object('jahr', p_f.jahr, 'bundesland', p_f.bundesland,
+                              'arbeitstage_pro_woche', p_f.arbeitstage_pro_woche, 'sperr_hinweis', p_f.sperr_hinweis,
+                              'kalender', urlaub.kalender_json(p_f.umfrage_id)) end)
+  || case when p_alles
+       then jsonb_build_object('aktiv', p_f.aktiv,
+                               'hat_antworten', exists (select 1 from urlaub.antworten an where an.frage_id = p_f.id))
+       else '{}'::jsonb end
+$$;
+
+-- Daten für die Mitarbeiter-Seite: nur diese Person, nur eingeschaltete Fragen.
+create or replace function urlaub.formular(p_mitarbeiter_id bigint)
+returns jsonb
+language sql stable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'name',         m.name,
+    'titel',        u.titel,
+    'frist',        u.frist,
+    'offen',        now() < u.frist,
+    'geaendert_am', a.geaendert_am,
+    'fragen', coalesce((select jsonb_agg(urlaub.frage_json(f, false) order by f.position, f.id)
+                        from urlaub.fragen f where f.umfrage_id = u.id and f.aktiv), '[]'::jsonb),
+    'antworten', coalesce((select jsonb_object_agg(an.frage_id::text, an.wert)
+                           from urlaub.antworten an
+                           join urlaub.fragen f on f.id = an.frage_id and f.aktiv
+                           where an.mitarbeiter_id = m.id), '{}'::jsonb))
+  from urlaub.mitarbeiter m
+  join urlaub.umfragen u on u.id = m.umfrage_id
+  left join urlaub.abgaben a on a.mitarbeiter_id = m.id
+  where m.id = p_mitarbeiter_id
+$$;
+
+create or replace function public.urlaub_laden(p_code text)
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_id bigint;
+begin
+  select id into v_id from urlaub.mitarbeiter where code = p_code;
+  if v_id is null then
+    raise exception 'LINK_UNGUELTIG';
+  end if;
+  return urlaub.formular(v_id);
+end;
+$$;
+
+-- Prüft alle Antworten; bei Fehlern wird nichts gespeichert (detail = Fehler je Frage).
+-- Sonst ersetzt die Abgabe alle bisherigen Antworten dieser Person.
+create or replace function public.umfrage_absenden(p_code text, p_antworten jsonb)
+returns jsonb
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_m     urlaub.mitarbeiter;
+  v_frist timestamptz;
+  v_r     jsonb;
+  v_id    text;
+  v_wert  jsonb;
+  v_typ   text;
+begin
+  select * into v_m from urlaub.mitarbeiter where code = p_code;
+  if not found then
+    raise exception 'LINK_UNGUELTIG';
+  end if;
+  select frist into v_frist from urlaub.umfragen where id = v_m.umfrage_id;
+  if now() >= v_frist then
+    raise exception 'FRIST_ABGELAUFEN';
+  end if;
+  v_r := urlaub.pruefe_antworten(v_m.umfrage_id, p_antworten);
+  if v_r -> 'fehler' <> '{}'::jsonb then
+    raise exception 'ANTWORTEN_UNGUELTIG' using detail = (v_r -> 'fehler')::text;
+  end if;
+  delete from urlaub.antworten where mitarbeiter_id = v_m.id;
+  for v_id, v_wert in select key, value from jsonb_each(v_r -> 'antworten') loop
+    insert into urlaub.antworten (mitarbeiter_id, frage_id, wert) values (v_m.id, v_id::bigint, v_wert);
+    select typ into v_typ from urlaub.fragen where id = v_id::bigint;
+    if v_typ = 'einfach' then
+      insert into urlaub.antwort_optionen (mitarbeiter_id, frage_id, option_id)
+      values (v_m.id, v_id::bigint, (v_wert #>> '{}')::bigint);
+    elsif v_typ = 'mehrfach' then
+      insert into urlaub.antwort_optionen (mitarbeiter_id, frage_id, option_id)
+      select v_m.id, v_id::bigint, (e #>> '{}')::bigint from jsonb_array_elements(v_wert) e;
+    end if;
+  end loop;
+  insert into urlaub.abgaben (mitarbeiter_id, geaendert_am) values (v_m.id, now())
+  on conflict (mitarbeiter_id) do update set geaendert_am = excluded.geaendert_am;
+  return urlaub.formular(v_m.id);
+end;
+$$;
+
+revoke all on function public.urlaub_laden(text)             from public, anon, authenticated;
+revoke all on function public.umfrage_absenden(text, jsonb)  from public, anon, authenticated;
+grant execute on function public.urlaub_laden(text)            to anon;
+grant execute on function public.umfrage_absenden(text, jsonb) to anon;
 
 -- ---------------------------------------------------------------------------
 -- Organisatoren: Hilfsfunktionen (intern)

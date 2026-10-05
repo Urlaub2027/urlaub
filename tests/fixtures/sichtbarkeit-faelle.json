@@ -1,0 +1,54 @@
+{
+  "fragen": [
+    { "key": "kinder", "typ": "janein" },
+    { "key": "ferien", "typ": "janein", "bedingungen": [{ "quelle": "kinder", "operator": "ist", "werte": true }] },
+    { "key": "schicht", "typ": "einfach", "optionen": ["frueh", "spaet", "nacht"] },
+    { "key": "tage", "typ": "mehrfach", "optionen": ["mo", "di", "mi"] },
+    { "key": "anzahl", "typ": "zahl" },
+    { "key": "note", "typ": "skala" },
+    { "key": "und_frage", "typ": "text_kurz", "verknuepfung": "und", "bedingungen": [
+      { "quelle": "schicht", "operator": "ist_eine_von", "werte": ["frueh", "spaet"] },
+      { "quelle": "anzahl", "operator": "groesser", "werte": 3 }] },
+    { "key": "oder_frage", "typ": "text_kurz", "verknuepfung": "oder", "bedingungen": [
+      { "quelle": "tage", "operator": "enthaelt_eine_von", "werte": ["mo"] },
+      { "quelle": "note", "operator": "kleiner", "werte": 2 }] },
+    { "key": "keine_nacht", "typ": "text_kurz", "bedingungen": [
+      { "quelle": "schicht", "operator": "ist_keine_von", "werte": ["nacht"] }] },
+    { "key": "ohne_mi", "typ": "text_kurz", "bedingungen": [
+      { "quelle": "tage", "operator": "enthaelt_keine_von", "werte": ["mi"] }] },
+    { "key": "genau5", "typ": "text_kurz", "bedingungen": [
+      { "quelle": "anzahl", "operator": "gleich", "werte": 5 }] },
+    { "key": "aus", "typ": "janein", "aktiv": false },
+    { "key": "haengt_an_aus", "typ": "text_kurz", "bedingungen": [
+      { "quelle": "aus", "operator": "ist", "werte": true }] },
+    { "key": "kette", "typ": "text_kurz", "bedingungen": [
+      { "quelle": "ferien", "operator": "ist", "werte": true }] },
+    { "key": "bedingung_aus", "typ": "text_kurz", "bedingungen": [
+      { "quelle": "kinder", "operator": "ist", "werte": true, "aktiv": false }] },
+    { "key": "hinweis", "typ": "hinweis" }
+  ],
+  "faelle": [
+    { "name": "nichts beantwortet", "antworten": {},
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "bedingung_aus", "hinweis"] },
+    { "name": "Kinder ja", "antworten": { "kinder": true },
+      "sichtbar": ["kinder", "ferien", "schicht", "tage", "anzahl", "note", "bedingung_aus", "hinweis"] },
+    { "name": "Kette über zwei Stufen", "antworten": { "kinder": true, "ferien": true },
+      "sichtbar": ["kinder", "ferien", "schicht", "tage", "anzahl", "note", "kette", "bedingung_aus", "hinweis"] },
+    { "name": "Kette über unsichtbare Zwischenfrage", "antworten": { "kinder": false, "ferien": true },
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "bedingung_aus", "hinweis"] },
+    { "name": "und erfüllt", "antworten": { "schicht": "frueh", "anzahl": 4 },
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "und_frage", "keine_nacht", "bedingung_aus", "hinweis"] },
+    { "name": "und nur halb erfüllt", "antworten": { "schicht": "frueh", "anzahl": 3 },
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "keine_nacht", "bedingung_aus", "hinweis"] },
+    { "name": "oder über Mehrfachauswahl", "antworten": { "tage": ["mo", "mi"] },
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "oder_frage", "bedingung_aus", "hinweis"] },
+    { "name": "oder über Skala", "antworten": { "note": 1 },
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "oder_frage", "bedingung_aus", "hinweis"] },
+    { "name": "oder nicht erfüllt, enthält keine", "antworten": { "tage": ["di"], "note": 3 },
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "ohne_mi", "bedingung_aus", "hinweis"] },
+    { "name": "ist keine von / gleich", "antworten": { "schicht": "nacht", "anzahl": 5 },
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "genau5", "bedingung_aus", "hinweis"] },
+    { "name": "leere Mehrfachauswahl zählt als unbeantwortet", "antworten": { "tage": [] },
+      "sichtbar": ["kinder", "schicht", "tage", "anzahl", "note", "bedingung_aus", "hinweis"] }
+  ]
+}
