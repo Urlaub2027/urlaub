@@ -63,6 +63,14 @@ export function nachMonat(kalender) {
   return [...gruppen].map(([monat, wochen]) => ({ name: MONATE[monat - 1], wochen }));
 }
 
+// Gewählte KWs, die inzwischen gesperrt sind oder im Kalender fehlen.
+export function gesperrteGewaehlte(kalender, wochen) {
+  return wochen.filter((kw) => {
+    const k = kalender.find((x) => x.kw === kw);
+    return !k || k.gesperrt;
+  });
+}
+
 export function gesperrteBereiche(kalender) {
   const monate = new Map();
   for (const k of kalender.filter((x) => x.gesperrt)) {

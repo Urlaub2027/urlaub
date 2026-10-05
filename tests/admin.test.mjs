@@ -100,6 +100,8 @@ test('Ungültige Einstellungen werden abgelehnt', async () => {
   await assert.rejects(speichern({ titel: '' }), /UNGUELTIGE_EINSTELLUNG/);
   await assert.rejects(speichern({ frist: '' }), /FRIST_LEER/);
   await assert.rejects(speichern({ frist: 'morgen' }), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(speichern({ frist: 'infinity' }), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(speichern({ frist: '-infinity' }), /UNGUELTIGE_EINSTELLUNG/);
 });
 
 test('Grunddaten nur ohne Abgaben änderbar; Regelverstoß wird markiert', async () => {
@@ -200,4 +202,22 @@ test('Organisator kann Tabellen nicht direkt lesen', async () => {
   for (const t of ['umfragen', 'mitarbeiter', 'organisatoren', 'einladungen']) {
     await assert.rejects(als(db, 'authenticated', chef, `select * from urlaub.${t}`), /permission denied/, t);
   }
+});
+
+test('Jahreswechsel zieht die Standard-Frist mit, eine eigene Frist bleibt', async () => {
+  const speichern = (id, daten) => alsChef('select public.org_umfrage_speichern($1, $2)', [id, daten]);
+  const a = await neueUmfrage(chef, 'Jahr A', 2027);
+  await speichern(a, { jahr: 2028 });
+  assert.equal((await umfrageVon(chef, a)).einstellungen.frist_eingabe, '2027-11-30T23:59');
+  const b = await neueUmfrage(chef, 'Jahr B', 2027);
+  const alt = (await umfrageVon(chef, b)).einstellungen.frist_eingabe;
+  await speichern(b, { jahr: 2028, frist: alt }); // unveränderte Frist aus dem Formular
+  assert.equal((await umfrageVon(chef, b)).einstellungen.frist_eingabe, '2027-11-30T23:59');
+  const c = await neueUmfrage(chef, 'Jahr C', 2027);
+  await speichern(c, { frist: '2026-10-20T12:00' });
+  await speichern(c, { jahr: 2028 });
+  assert.equal((await umfrageVon(chef, c)).einstellungen.frist_eingabe, '2026-10-20T12:00');
+  const d = await neueUmfrage(chef, 'Jahr D', 2027);
+  await speichern(d, { jahr: 2028, frist: '2027-05-01T10:00' });
+  assert.equal((await umfrageVon(chef, d)).einstellungen.frist_eingabe, '2027-05-01T10:00');
 });

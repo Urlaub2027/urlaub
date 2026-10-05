@@ -19,12 +19,22 @@ Programmierkenntnisse. Menüs bei Supabase und GitHub können leicht anders hei�
 
 ## Teil A – Umstellung der bestehenden Installation (einmalig)
 
-1. Supabase → **SQL Editor** → „New query" → kompletten Inhalt von `supabase/schema.sql`
-   einfügen → **Run**. Erwartet: „Success. No rows returned".
-   Die bisherige Umfrage wird dabei zu „Urlaubswünsche 2027"; alle Mitarbeiter-Links
+0. **Vorab prüfen:** Im SQL Editor ausführen:
+
+   ```sql
+   select a.user_id, u.email from urlaub.admins a join auth.users u on u.id = a.user_id;
+   ```
+
+   Erwartet: genau eine Zeile mit `aw@example.com`. Wenn nicht: **abbrechen und nachfragen**.
+
+1. Supabase → **SQL Editor** → „New query“ → kompletten Inhalt von `supabase/schema.sql`
+   einfügen → **Run**. Erwartet: „Success. No rows returned“.
+   Die bisherige Umfrage wird dabei zu „Urlaubswünsche 2027“; alle Mitarbeiter-Links
    bleiben gültig; das Konto `aw` wird Hauptadmin.
 
-   Falls der SQL Editor eine Meldung mit „UMSTELLUNG abgebrochen" zeigt, wurde nichts verändert. Die Meldung nennt den Grund (z. B. zwei Mitarbeiter, deren Namen sich nur in Groß-/Kleinschreibung unterscheiden). Den Grund beheben und die Datei erneut ausführen.
+   Fragt Supabase nach einer Bestätigung, weil die Datei Löschbefehle für alte Bestandteile enthält, mit „Run this query“ bestätigen.
+
+   Falls der SQL Editor eine Meldung mit „UMSTELLUNG abgebrochen“ zeigt, wurde nichts verändert. Die Meldung nennt den Grund (z. B. zwei Mitarbeiter, deren Namen sich nur in Groß-/Kleinschreibung unterscheiden). Den Grund beheben und die Datei erneut ausführen.
 
 2. Supabase → **Authentication** → **Sign In / Providers**:
    - **Allow new users to sign up: an** (nötig für Einladungen – die Datenbank lehnt
@@ -32,10 +42,11 @@ Programmierkenntnisse. Menüs bei Supabase und GitHub können leicht anders hei�
    - **Confirm email: aus** (es werden keine E-Mails verschickt)
    - **Allow anonymous sign-ins: aus**
    - **Save changes**
-3. Neue Konten entstehen **nur noch über Einladungslinks**. „Add user" im Supabase-
+3. Neue Konten entstehen **nur noch über Einladungslinks**. „Add user“ im Supabase-
    Dashboard funktioniert dafür nicht mehr.
+4. Zur Kontrolle die Datei direkt ein zweites Mal ausführen – es muss wieder „Success“ erscheinen.
 
-**Hinweis:** Die Regel „höchstens 3 Wochen am Stück" gilt ab der Umstellung auch für die bestehende Umfrage. Bereits gespeicherte Abgaben bleiben erhalten; verstößt eine dagegen, wird sie in der Verwaltung markiert.
+**Hinweis:** Die Regel „höchstens 3 Wochen am Stück“ gilt ab der Umstellung auch für die bestehende Umfrage. Bereits gespeicherte Abgaben bleiben erhalten; verstößt eine dagegen, wird sie in der Verwaltung markiert.
 
 ## Teil B – Neuinstallation (nur für eine komplett neue Kopie)
 
@@ -89,9 +100,9 @@ und Passwort selbst.
 |---|---|
 | Ein Mitarbeiter-Link wurde weitergegeben oder ist verloren | Beim Namen **Neuer Link** → neu verschicken. Abgabe bleibt erhalten. |
 | Jemand will seine Abgabe ganz zurückziehen | Person löschen und neu anlegen (neuer Link). |
-| Seite meldet „Keine Verbindung" für alle | Supabase pausiert kostenlose Projekte nach ca. 1 Woche ohne Aufrufe. Bei Supabase anmelden → Projekt → **Restore project**. Daten bleiben erhalten. |
+| Seite meldet „Keine Verbindung“ für alle | Supabase pausiert kostenlose Projekte nach ca. 1 Woche ohne Aufrufe. Bei Supabase anmelden → Projekt → **Restore project**. Daten bleiben erhalten. |
 | Eigenes Passwort ändern | Verwaltung → **Konto & Einladen** → Passwort ändern. |
-| Organisator hat Passwort vergessen | Hauptadmin im Supabase SQL Editor: `update auth.users set encrypted_password = extensions.crypt('NEUES-PASSWORT', extensions.gen_salt('bf')) where email = '<benutzername>@example.com';` – Fenster danach **nicht** speichern („Discard"). |
+| Organisator hat Passwort vergessen | Hauptadmin im Supabase SQL Editor: `update auth.users set encrypted_password = extensions.crypt('NEUES-PASSWORT', extensions.gen_salt('bf')) where email = '<benutzername>@example.com';` – Fenster danach **nicht** speichern („Discard“). |
 | Einladung abgelaufen | Neuen Einladungslink erzeugen. |
 | Organisator soll keinen Zugang mehr haben | Hauptadmin → **Organisatoren** → **Sperren**. |
 | Neue Organisator-Registrierung schlägt fehl, obwohl die Einladung gerade erzeugt wurde | Benutzername schon vergeben oder Einladung inzwischen benutzt – neuen Einladungslink erzeugen und einen anderen Benutzernamen wählen. |

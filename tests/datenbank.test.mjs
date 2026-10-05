@@ -130,6 +130,15 @@ test('Gesperrte Monate aus der Umfrage gelten beim Speichern', async () => {
   }
 });
 
+test('Sind alle Monate gesperrt, wird jede Woche abgelehnt', async () => {
+  await setze("gesperrte_monate = '{1,2,3,4,5,6,7,8,9,10,11,12}'");
+  try {
+    await assert.rejects(speichern(benCode, [10]), /UNGUELTIGE_WOCHE/);
+  } finally {
+    await setze("gesperrte_monate = '{12}'");
+  }
+});
+
 test('Antwort enthält nur eigene Daten', async () => {
   const r = await laden(benCode);
   const text = JSON.stringify(r);

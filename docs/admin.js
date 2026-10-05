@@ -125,11 +125,18 @@ async function registrierenAbsenden(ereignis) {
     }
     await nachLogin();
   } catch (fehler) {
-    meldung(fehler.message === 'user_already_exists' || fehler.message === 'email_exists'
+    const m = fehler.message;
+    meldung(m === 'user_already_exists' || m === 'email_exists'
       ? 'Diesen Benutzernamen gibt es schon. Bitte wähle einen anderen.'
-      : fehler.message === 'weak_password' ? 'Das Passwort ist zu schwach. Bitte wähle ein längeres.'
-        : fehler.message === 'KEINE_VERBINDUNG' ? fehlerText('KEINE_VERBINDUNG')
-          : 'Registrierung fehlgeschlagen. Die Einladung ist eventuell abgelaufen oder schon benutzt.');
+      : m === 'weak_password' ? 'Das Passwort ist zu schwach. Bitte wähle ein längeres.'
+        : m === 'KEINE_VERBINDUNG' ? fehlerText('KEINE_VERBINDUNG')
+          : m === 'email_address_invalid'
+            ? 'Dieser Benutzername wird vom Anmeldedienst nicht akzeptiert. Bitte wähle einen anderen.'
+            : m === 'signup_disabled' || /Signups not allowed/i.test(m)
+              ? 'Die Registrierung ist im Moment abgeschaltet. Bitte wende dich an den Hauptadmin.'
+              : fehler.status === 500
+                ? 'Registrierung abgelehnt: Die Einladung ist ungültig, abgelaufen oder schon benutzt – oder der Benutzername ist vergeben. Bitte frag nach einem neuen Einladungslink.'
+                : 'Registrierung fehlgeschlagen. Die Einladung ist eventuell abgelaufen oder schon benutzt.');
   } finally {
     $('reg-knopf').disabled = false;
   }
@@ -248,7 +255,7 @@ async function zeigeOrganisatoren() {
       element('p', 'karte-name', `${o.anzeigename} (${o.benutzername})${rolle}`),
       element('p', o.gesperrt ? 'karte-status offen' : 'karte-status', o.gesperrt ? `GESPERRT · ${status}` : status),
     );
-    if (!o.ich) {
+    if (!o.ich && !o.ist_hauptadmin) {
       const aktionen = element('div', 'karte-aktionen');
       aktionen.append(knopf(o.gesperrt ? 'Entsperren' : 'Sperren',
         o.gesperrt ? 'zweitrangig klein-knopf' : 'gefahr klein-knopf', async () => {

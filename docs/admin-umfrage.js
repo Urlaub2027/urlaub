@@ -97,7 +97,7 @@ function zeichne() {
     : `Frist abgelaufen am ${zeitpunkt(e.frist)} – nur noch Ansehen möglich`;
   zeichnePersonen(personen);
   zeichneWochen();
-  if (!$('reiter-einstellungen').hidden) einstellungenFuellen();
+  zeichneFreieTage();
 }
 
 function zeichnePersonen(personen) {
@@ -161,6 +161,11 @@ function einstellungenFuellen() {
   for (const box of $('e-monate').querySelectorAll('input')) box.checked = e.gesperrte_monate.includes(Number(box.value));
   $('e-hinweis').value = e.sperr_hinweis;
   $('e-frist').value = e.frist_eingabe;
+  zeichneFreieTage();
+}
+
+function zeichneFreieTage() {
+  const e = daten.einstellungen;
   $('freie-tage').replaceChildren(...daten.freie_tage.map((f) => {
     const li = element('li', 'karte');
     li.append(element('p', 'karte-name', `${datumDeutsch(f.datum)} – ${f.name}`));
@@ -204,7 +209,9 @@ async function einstellungenSpeichern(ereignis) {
       arbeitstage_pro_woche: Number($('e-arbeitstage').value),
     });
   }
-  await aktion('org_umfrage_speichern', { p_umfrage_id: umfrageId, p_daten: p }, 'Einstellungen gespeichert.');
+  if (await aktion('org_umfrage_speichern', { p_umfrage_id: umfrageId, p_daten: p }, 'Einstellungen gespeichert.')) {
+    einstellungenFuellen(); // nur nach erfolgreichem Speichern das Formular neu füllen
+  }
 }
 
 async function freienTagHinzufuegen(ereignis) {

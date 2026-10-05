@@ -22,6 +22,7 @@ const FEHLER = {
   UNGUELTIGE_EINSTELLUNG: 'Mindestens eine Angabe ist ungültig. Bitte prüfe die Zahlen (z. B. „mindestens“ nicht größer als „höchstens“).',
   DATUM_FALSCHES_JAHR: 'Das Datum muss im Jahr der Umfrage liegen.',
   NICHT_SELBST: 'Du kannst dich nicht selbst sperren.',
+  HAUPTADMIN_NICHT_SPERRBAR: 'Hauptadmins können nicht gesperrt werden.',
   NICHT_GEFUNDEN: 'Nicht gefunden.',
   KEINE_VERBINDUNG: 'Keine Verbindung. Bitte prüfe dein Internet.',
 };

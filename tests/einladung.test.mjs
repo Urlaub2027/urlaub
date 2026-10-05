@@ -95,6 +95,15 @@ test('Hauptadmin sieht Organisatoren und kann sperren', async () => {
   await assert.rejects(als(db, 'authenticated', lena, 'select public.haupt_sperren($1, true)', [chef]), /KEIN_ZUGRIFF/);
 });
 
+test('Hauptadmins können nicht gesperrt werden', async () => {
+  const link = (await db.query('select urlaub.start_einladung() as l')).rows[0].l;
+  const zweiter = await registriere(db, 'chef2', codeAus(link), 'Chef 2');
+  assert.equal((await db.query('select ist_hauptadmin from urlaub.organisatoren where user_id = $1', [zweiter])).rows[0].ist_hauptadmin, true);
+  await assert.rejects(als(db, 'authenticated', chef, 'select public.haupt_sperren($1, true)', [zweiter]),
+    /HAUPTADMIN_NICHT_SPERRBAR/);
+  await als(db, 'authenticated', chef, 'select public.haupt_sperren($1, false)', [zweiter]); // Entsperren bleibt harmlos
+});
+
 test('Rechte: wer darf was aufrufen', async () => {
   assert.deepEqual(await pruefen(null), { gueltig: false, eingeladen_von: null });
   for (const sql of ['select public.org_einladung_erstellen()', 'select public.haupt_organisatoren()',

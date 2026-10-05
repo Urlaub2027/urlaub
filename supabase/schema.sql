@@ -338,7 +338,7 @@ begin
   if p_wochen is null or cardinality(p_wochen) = 0 then
     return 'KEINE_WOCHE';
   end if;
-  select array_agg(k.kw) into v_erlaubt from urlaub.kalender(p_umfrage_id) k where not k.gesperrt;
+  select coalesce(array_agg(k.kw), '{}') into v_erlaubt from urlaub.kalender(p_umfrage_id) k where not k.gesperrt;
   if exists (select 1 from unnest(p_wochen) x where x is null or not (x = any (v_erlaubt))) then
     return 'UNGUELTIGE_WOCHE';
   end if;
@@ -664,6 +664,9 @@ begin
   if p_daten ? 'frist' and (v_frist is null or v_frist = '') then
     raise exception 'FRIST_LEER';
   end if;
+  if lower(coalesce(v_frist, '')) in ('infinity', '-infinity', '+infinity') then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
   begin
     if p_daten ? 'gesperrte_monate' then
       select coalesce(array_agg(x::int order by x::int), '{}')
@@ -683,7 +686,14 @@ begin
       frist = case
                 when v_frist is null
                   or to_char(frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI') = v_frist
-                then frist
+                then case
+                       -- Jahr gewechselt, Frist noch auf dem alten Standard: mit dem Jahr mitziehen
+                       when (p_daten ->> 'jahr') is not null
+                        and (p_daten ->> 'jahr')::int <> v_u.jahr
+                        and frist = make_timestamp(v_u.jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin'
+                       then make_timestamp((p_daten ->> 'jahr')::int - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin'
+                       else frist
+                     end
                 else v_frist::timestamp at time zone 'Europe/Berlin'
               end
     where id = v_u.id;
@@ -845,10 +855,17 @@ begin
 end;
 $$;
 
-drop trigger if exists urlaub_neuer_benutzer on auth.users;
-create trigger urlaub_neuer_benutzer
-  after insert on auth.users
-  for each row execute function urlaub.neuer_benutzer();
+-- Kein drop trigger: auf auth.users fehlt im SQL-Editor die Eigentümerschaft.
+do $$
+begin
+  if not exists (select 1 from pg_catalog.pg_trigger
+                 where tgname = 'urlaub_neuer_benutzer' and tgrelid = 'auth.users'::pg_catalog.regclass) then
+    create trigger urlaub_neuer_benutzer
+      after insert on auth.users
+      for each row execute function urlaub.neuer_benutzer();
+  end if;
+end;
+$$;
 
 -- Nur für eine Neuinstallation im SQL-Editor: Link für das erste Konto (Hauptadmin).
 create or replace function urlaub.start_einladung()
@@ -952,6 +969,10 @@ declare
 begin
   if p_user_id = v_o.user_id then
     raise exception 'NICHT_SELBST';
+  end if;
+  if coalesce(p_gesperrt, false)
+     and exists (select 1 from urlaub.organisatoren where user_id = p_user_id and ist_hauptadmin) then
+    raise exception 'HAUPTADMIN_NICHT_SPERRBAR';
   end if;
   update urlaub.organisatoren set gesperrt = coalesce(p_gesperrt, gesperrt) where user_id = p_user_id;
   if not found then

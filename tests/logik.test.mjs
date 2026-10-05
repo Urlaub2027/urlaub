@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, gleicheAuswahl, zeitpunkt,
-  folgeLaenge, gesperrteBereiche, regelText,
+  folgeLaenge, gesperrteBereiche, regelText, gesperrteGewaehlte,
 } from '../docs/logik.js';
 
 const kalender = [
@@ -88,4 +88,10 @@ test('Neue Fehlertexte', () => {
   assert.match(fehlertext('ZU_VIELE_AM_STUECK'), /am Stück/);
   assert.match(fehlertext('ZU_WENIGE_WOCHEN'), /mehr Wochen/);
   assert.match(fehlertext('UNGUELTIGE_WOCHE'), /nicht wählbar/);
+});
+
+test('Gewählte Wochen in gesperrten Monaten oder ohne Kalendereintrag werden erkannt', () => {
+  const k = [{ kw: 1, gesperrt: false }, { kw: 2, gesperrt: true }, { kw: 3, gesperrt: false }];
+  assert.deepEqual(gesperrteGewaehlte(k, [1, 2, 3, 99]), [2, 99]);
+  assert.deepEqual(gesperrteGewaehlte(k, [1, 3]), []);
 });

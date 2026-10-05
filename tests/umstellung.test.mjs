@@ -86,7 +86,7 @@ test('Umstellung ohne Admin bricht ab', async () => {
   const leer = await neueDatenbank({ schema: false });
   await leer.exec(SCHEMA_V1);
   await assert.rejects(leer.exec(SCHEMA), /UMSTELLUNG/);
-  await leer.exec('rollback'); // Skript-Transaktion bleibt nach Fehler offen (der SQL-Editor rollt selbst zurück)
+  await leer.exec('rollback'); // PGlite lässt die Transaktion nach dem Fehler abgebrochen offen, daher hier ausdrücklich zurückrollen
   await nichtUmgestellt(leer);
 });
 

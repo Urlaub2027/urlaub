@@ -1,7 +1,7 @@
 import { rpc } from './api.js';
 import {
   codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, gleicheAuswahl, zeitpunkt,
-  gesperrteBereiche, regelText,
+  gesperrteBereiche, regelText, gesperrteGewaehlte,
 } from './logik.js';
 
 const $ = (id) => document.getElementById(id);
@@ -93,10 +93,18 @@ function aktualisiere() {
 }
 
 function zeigeFormular() {
-  auswahl = new Set(daten.wochen);
-  $('status').textContent = daten.wochen.length
+  const entfernt = gesperrteGewaehlte(daten.kalender, daten.wochen);
+  auswahl = new Set(daten.wochen.filter((kw) => !entfernt.includes(kw)));
+  let status = daten.wochen.length
     ? `Deine Wünsche sind gespeichert (Stand ${zeitpunkt(daten.geaendert_am)}). Du kannst sie bis ${zeitpunkt(daten.frist)} ändern.`
     : `Du hast noch nichts abgegeben. Abgabe bis ${zeitpunkt(daten.frist)}.`;
+  if (entfernt.length) {
+    const liste = entfernt.map((kw) => `KW ${kw}`).join(', ');
+    status += entfernt.length === 1
+      ? ` ${liste} liegt inzwischen in einem gesperrten Zeitraum und wurde aus deiner Auswahl entfernt. Bitte speichere deine Auswahl neu.`
+      : ` ${liste} liegen inzwischen in einem gesperrten Zeitraum und wurden aus deiner Auswahl entfernt. Bitte speichere deine Auswahl neu.`;
+  }
+  $('status').textContent = status;
   aktualisiere();
   zeige('formular');
 }
