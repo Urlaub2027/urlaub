@@ -9,6 +9,7 @@ import { erzeugeXlsx } from './xlsx.js';
 let ctx = null;      // { aufruf, fehlerAnzeigen, zurueck }
 let daten = null;    // Antwort von org_umfrage
 let umfrageId = null;
+let formularFuer = null; // Umfrage-ID, deren Werte das Einstellungsformular gerade zeigt
 
 export function initUmfrage(kontext) {
   ctx = kontext;
@@ -34,6 +35,7 @@ export function initUmfrage(kontext) {
 export async function zeigeUmfrage(id) {
   umfrageId = id;
   daten = null;
+  formularFuer = null;
   for (const k of ['u-titel', 'kennzahl', 'frist-anzeige']) $(k).textContent = '';
   $('personen').replaceChildren();
   $('wochen').replaceChildren();
@@ -55,6 +57,8 @@ async function laden() {
   if (angefragt !== umfrageId) return; // veraltete Antwort einer früheren Umfrage
   daten = antwort;
   zeichne();
+  // Reiter wurde während des Ladens geöffnet: Formular zeigt noch eine andere Umfrage
+  if (!$('reiter-einstellungen').hidden && formularFuer !== Number(umfrageId)) einstellungenFuellen();
 }
 
 // Die geladenen Daten gehören zur aktuell geöffneten Umfrage.
@@ -147,6 +151,7 @@ function zeichneWochen() {
 
 function einstellungenFuellen() {
   const e = daten.einstellungen;
+  formularFuer = Number(e.id);
   const jetzt = new Date().getFullYear();
   $('e-titel').value = e.titel;
   fuelleJahre($('e-jahr'), Math.min(e.jahr, jetzt), Math.max(e.jahr, jetzt + 3), e.jahr);
@@ -190,7 +195,10 @@ async function mitarbeiterAnlegen(ereignis) {
 
 async function einstellungenSpeichern(ereignis) {
   ereignis.preventDefault();
-  if (!datenPasst()) return;
+  if (!datenPasst() || formularFuer !== Number(umfrageId)) {
+    meldung('Bitte warte, bis die Umfrage geladen ist.');
+    return;
+  }
   const e = daten.einstellungen;
   const p = {
     titel: $('e-titel').value,
@@ -210,7 +218,7 @@ async function einstellungenSpeichern(ereignis) {
     });
   }
   if (await aktion('org_umfrage_speichern', { p_umfrage_id: umfrageId, p_daten: p }, 'Einstellungen gespeichert.')) {
-    einstellungenFuellen(); // nur nach erfolgreichem Speichern das Formular neu füllen
+    if (datenPasst()) einstellungenFuellen(); // nur nach erfolgreichem Speichern das Formular neu füllen
   }
 }
 
