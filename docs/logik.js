@@ -8,7 +8,9 @@ const FEHLERTEXTE = {
   LINK_UNGUELTIG: 'Dieser Link ist ungültig. Bitte frag nach deinem persönlichen Link.',
   FRIST_ABGELAUFEN: 'Die Frist ist abgelaufen. Änderungen sind nicht mehr möglich.',
   KEINE_WOCHE: 'Bitte wähle mindestens eine Woche.',
-  UNGUELTIGE_WOCHE: 'Es sind nur die Kalenderwochen 1 bis 47 wählbar.',
+  UNGUELTIGE_WOCHE: 'Mindestens eine gewählte Woche ist nicht wählbar.',
+  ZU_WENIGE_WOCHEN: 'Bitte wähle mehr Wochen.',
+  ZU_VIELE_AM_STUECK: 'So viele Wochen am Stück sind nicht erlaubt.',
   DOPPELTE_WOCHE: 'Eine Woche wurde doppelt gewählt.',
   ZU_VIELE_WOCHEN: 'Du hast zu viele Wochen gewählt.',
   ZU_VIELE_TAGE: 'Die gewählten Wochen brauchen mehr Urlaubstage, als du hast.',
@@ -35,20 +37,46 @@ export function zusammenfassung(kalender, auswahl, maxWochen, urlaubstage) {
   };
 }
 
-// Ein Kästchen ist gesperrt, wenn die Frist vorbei ist oder das Limit erreicht
-// ist und es nicht schon angehakt ist (Abwählen bleibt immer möglich).
-export function istGesperrt(kw, auswahl, limitErreicht, offen) {
+// Länge der Folge aufeinanderfolgender KWs, die entstünde, wenn kw dazukäme.
+export function folgeLaenge(kw, auswahl) {
+  let n = 1;
+  for (let k = kw - 1; auswahl.has(k); k -= 1) n += 1;
+  for (let k = kw + 1; auswahl.has(k); k += 1) n += 1;
+  return n;
+}
+
+// Gesperrt, wenn die Frist vorbei ist, das Limit erreicht ist oder die Folge zu lang
+// würde – außer das Kästchen ist schon angehakt (Abwählen bleibt immer möglich).
+export function istGesperrt(kw, auswahl, limitErreicht, offen, maxAmStueck = Infinity) {
   if (!offen) return true;
-  return limitErreicht && !auswahl.has(kw);
+  if (auswahl.has(kw)) return false;
+  if (limitErreicht) return true;
+  return folgeLaenge(kw, auswahl) > maxAmStueck;
 }
 
 export function nachMonat(kalender) {
   const gruppen = new Map();
-  for (const k of kalender) {
+  for (const k of kalender.filter((x) => !x.gesperrt)) {
     if (!gruppen.has(k.monat)) gruppen.set(k.monat, []);
     gruppen.get(k.monat).push(k);
   }
   return [...gruppen].map(([monat, wochen]) => ({ name: MONATE[monat - 1], wochen }));
+}
+
+export function gesperrteBereiche(kalender) {
+  const monate = new Map();
+  for (const k of kalender.filter((x) => x.gesperrt)) {
+    const b = monate.get(k.monat);
+    if (b) { b.vonKw = Math.min(b.vonKw, k.kw); b.bisKw = Math.max(b.bisKw, k.kw); }
+    else monate.set(k.monat, { name: MONATE[k.monat - 1], vonKw: k.kw, bisKw: k.kw, monat: k.monat });
+  }
+  return [...monate.values()].sort((a, b) => a.vonKw - b.vonKw)
+    .map(({ name, vonKw, bisKw }) => ({ name, vonKw, bisKw }));
+}
+
+export function regelText(d) {
+  const basis = `mindestens ${d.min_wochen}, höchstens ${d.max_wochen} Wochen`;
+  return d.max_am_stueck < d.max_wochen ? `${basis}, davon höchstens ${d.max_am_stueck} am Stück` : basis;
 }
 
 export function gleicheAuswahl(a, b) {

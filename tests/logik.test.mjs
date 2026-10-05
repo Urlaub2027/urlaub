@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, gleicheAuswahl, zeitpunkt,
+  folgeLaenge, gesperrteBereiche, regelText,
 } from '../docs/logik.js';
 
 const kalender = [
@@ -45,4 +46,46 @@ test('Hilfsfunktionen', () => {
   assert.match(fehlertext('ZU_VIELE_WOCHEN'), /zu viele Wochen/);
   assert.match(fehlertext('IRGENDWAS'), /später/);
   assert.equal(zeitpunkt('2026-11-30T22:59:59Z'), '30.11.2026, 23:59 Uhr');
+});
+
+test('Folge am Stück', () => {
+  const auswahl = new Set([10, 11, 13]);
+  assert.equal(folgeLaenge(12, auswahl), 4);
+  assert.equal(folgeLaenge(20, auswahl), 1);
+  assert.equal(folgeLaenge(9, auswahl), 3);
+});
+
+test('Kästchen, das die Folge zu lang machen würde, ist gesperrt', () => {
+  const auswahl = new Set([10, 11, 12]);
+  assert.equal(istGesperrt(13, auswahl, false, true, 3), true);
+  assert.equal(istGesperrt(9, auswahl, false, true, 3), true);
+  assert.equal(istGesperrt(14, auswahl, false, true, 3), false);
+  assert.equal(istGesperrt(11, auswahl, false, true, 3), false); // abwählen geht immer
+});
+
+test('Gesperrte Wochen erscheinen nicht in den Monaten, sondern als Bereiche', () => {
+  const kal = [
+    { kw: 47, monat: 11, arbeitstage: 6, gesperrt: false },
+    { kw: 48, monat: 12, arbeitstage: 6, gesperrt: true },
+    { kw: 49, monat: 12, arbeitstage: 6, gesperrt: true },
+    { kw: 30, monat: 7, arbeitstage: 6, gesperrt: true },
+  ];
+  assert.deepEqual(nachMonat(kal).map((g) => g.name), ['November']);
+  assert.deepEqual(gesperrteBereiche(kal), [
+    { name: 'Juli', vonKw: 30, bisKw: 30 },
+    { name: 'Dezember', vonKw: 48, bisKw: 49 },
+  ]);
+});
+
+test('Regeltext', () => {
+  assert.equal(regelText({ min_wochen: 1, max_wochen: 6, max_am_stueck: 3 }),
+    'mindestens 1, höchstens 6 Wochen, davon höchstens 3 am Stück');
+  assert.equal(regelText({ min_wochen: 2, max_wochen: 4, max_am_stueck: 4 }),
+    'mindestens 2, höchstens 4 Wochen');
+});
+
+test('Neue Fehlertexte', () => {
+  assert.match(fehlertext('ZU_VIELE_AM_STUECK'), /am Stück/);
+  assert.match(fehlertext('ZU_WENIGE_WOCHEN'), /mehr Wochen/);
+  assert.match(fehlertext('UNGUELTIGE_WOCHE'), /nicht wählbar/);
 });

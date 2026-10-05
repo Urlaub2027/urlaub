@@ -14,7 +14,7 @@
 </head>
 <body>
   <header class="kopf">
-    <h1>Urlaubswünsche 2027</h1>
+    <h1 id="titel">Urlaubswünsche</h1>
     <p id="begruessung" class="begruessung"></p>
   </header>
 
@@ -26,14 +26,14 @@
     <section id="formular" hidden>
       <p id="status" class="box"></p>
       <p class="erklaerung">
-        Wähle die Kalenderwochen, in denen du Urlaub möchtest: mindestens 1, höchstens
-        <span id="max-wochen"></span>. Die Wochen müssen nicht zusammenhängen.
-        Es sind Wünsche, keine Genehmigungen.
+        Wähle die Kalenderwochen, in denen du Urlaub möchtest: <span id="regeln"></span>.
+        Die Wochen müssen nicht zusammenhängen. Es sind Wünsche, keine Genehmigungen.
       </p>
       <div id="monate"></div>
-      <section class="box box-gesperrt">
-        <h2>Dezember (KW 48–52)</h2>
-        <p id="dezember-hinweis"></p>
+      <section id="gesperrt-box" class="box box-gesperrt" hidden>
+        <h2>Nicht wählbar</h2>
+        <ul id="gesperrt-liste" class="liste"></ul>
+        <p id="sperr-hinweis"></p>
       </section>
       <div class="leiste">
         <p id="zaehler" class="zaehler" aria-live="polite"></p>

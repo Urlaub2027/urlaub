@@ -1,6 +1,7 @@
 import { rpc } from './api.js';
 import {
   codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, gleicheAuswahl, zeitpunkt,
+  gesperrteBereiche, regelText,
 } from './logik.js';
 
 const $ = (id) => document.getElementById(id);
@@ -23,7 +24,7 @@ function zeigeFehler(fehlercode) {
 
 function wochenText(kw) {
   const k = daten.kalender.find((x) => x.kw === kw);
-  const tage = k.arbeitstage === 6 ? '' : ` · ${k.arbeitstage} Urlaubstage (${k.feiertag})`;
+  const tage = k.arbeitstage === daten.arbeitstage_pro_woche ? '' : ` · ${k.arbeitstage} Urlaubstage (${k.feiertag})`;
   return `KW ${k.kw}: ${k.von}–${k.bis}${tage}`;
 }
 
@@ -53,7 +54,7 @@ function baueFormular() {
       datum.className = 'datum';
       datum.textContent = `${k.von}–${k.bis}`;
       zeile.append(kaestchen, kw, datum);
-      if (k.arbeitstage !== 6) {
+      if (k.arbeitstage !== daten.arbeitstage_pro_woche) {
         const feiertag = document.createElement('span');
         feiertag.className = 'feiertag';
         feiertag.textContent = `nur ${k.arbeitstage} Urlaubstage · ${k.feiertag}`;
@@ -63,8 +64,15 @@ function baueFormular() {
     }
     monate.append(block);
   }
-  $('max-wochen').textContent = String(daten.max_wochen);
-  $('dezember-hinweis').textContent = daten.dezember_hinweis;
+  $('regeln').textContent = regelText(daten);
+  const bereiche = gesperrteBereiche(daten.kalender);
+  $('gesperrt-box').hidden = bereiche.length === 0;
+  $('gesperrt-liste').replaceChildren(...bereiche.map((b) => {
+    const li = document.createElement('li');
+    li.textContent = b.vonKw === b.bisKw ? `${b.name} (KW ${b.vonKw})` : `${b.name} (KW ${b.vonKw}–${b.bisKw})`;
+    return li;
+  }));
+  $('sperr-hinweis').textContent = daten.sperr_hinweis;
 }
 
 function aktualisiere() {
@@ -73,11 +81,13 @@ function aktualisiere() {
   for (const kaestchen of $('monate').querySelectorAll('input')) {
     const kw = Number(kaestchen.value);
     kaestchen.checked = auswahl.has(kw);
-    kaestchen.disabled = istGesperrt(kw, auswahl, z.limitErreicht, daten.offen);
+    kaestchen.disabled = istGesperrt(kw, auswahl, z.limitErreicht, daten.offen, daten.max_am_stueck);
+    kaestchen.closest('label').title = kaestchen.disabled && daten.offen && !z.limitErreicht
+      ? `Höchstens ${daten.max_am_stueck} Wochen am Stück` : '';
     kaestchen.closest('label').classList.toggle('gewaehlt', kaestchen.checked);
   }
   const unveraendert = gleicheAuswahl(auswahl, new Set(daten.wochen));
-  $('absenden').disabled = !daten.offen || z.anzahl === 0 || unveraendert;
+  $('absenden').disabled = !daten.offen || z.anzahl < daten.min_wochen || unveraendert;
   $('absenden').textContent = daten.wochen.length ? 'Änderung speichern' : 'Wünsche absenden';
   $('meldung').hidden = true;
 }
@@ -141,6 +151,8 @@ async function start() {
     return zeigeFehler(fehler.message);
   }
   $('begruessung').textContent = `Hallo ${daten.name}`;
+  $('titel').textContent = daten.titel;
+  document.title = daten.titel;
   baueFormular();
   if (daten.offen) zeigeFormular(); else zeigeBestaetigung(false);
 }
