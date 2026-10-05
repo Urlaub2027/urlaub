@@ -69,6 +69,13 @@ test('Einstellungen der Umfrage: nur Titel und Frist', async () => {
   assert.equal(e.titel, 'Neu2');
 });
 
+test('Frist im Editor: nur Jahre 2000 bis 2200', async () => {
+  const id = await neueUmfrage(chef);
+  const speichern = (d) => alsChef('select public.org_umfrage_speichern($1, $2)', [id, d]);
+  await assert.rejects(speichern({ frist: '280000-01-01T00:00' }), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(speichern({ frist: '1999-12-31T23:00' }), /UNGUELTIGE_EINSTELLUNG/);
+});
+
 test('Mitarbeiter anlegen: Name je Umfrage eindeutig', async () => {
   const a = await neueUmfrage(chef, 'A');
   const b = await neueUmfrage(chef, 'B');

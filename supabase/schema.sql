@@ -179,6 +179,12 @@ create table if not exists urlaub.lebenszeichen (
   zeit timestamptz not null default now()
 );
 
+-- Codes, die per „Neuer Link“ widerrufen wurden: werden beim Einspielen einer Sicherung nie wiederverwendet.
+create table if not exists urlaub.widerrufene_codes (
+  code          text primary key,
+  widerrufen_am timestamptz not null default now()
+);
+
 insert into urlaub.app (link_basis) values ('https://urlaub2027.github.io/urlaub/')
 on conflict (id) do nothing;
 
@@ -421,6 +427,7 @@ alter table urlaub.bedingungen      enable row level security;
 alter table urlaub.antworten        enable row level security;
 alter table urlaub.antwort_optionen enable row level security;
 alter table urlaub.lebenszeichen    enable row level security;
+alter table urlaub.widerrufene_codes enable row level security;
 
 -- ---------------------------------------------------------------------------
 -- Mitarbeiter-Funktionen: Antworten prüfen und absenden
@@ -1153,6 +1160,7 @@ as $$
 declare
   v_u     urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
   v_frist text := btrim(p_daten ->> 'frist');
+  v_neu   timestamptz;
 begin
   if p_daten ? 'frist' and (v_frist is null or v_frist = '') then
     raise exception 'FRIST_LEER';
@@ -1161,6 +1169,13 @@ begin
     raise exception 'UNGUELTIGE_EINSTELLUNG';
   end if;
   begin
+    if v_frist is not null
+       and to_char(v_u.frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI') <> v_frist then
+      v_neu := v_frist::timestamp at time zone 'Europe/Berlin';
+      if extract(year from v_neu) not between 2000 and 2200 then
+        raise exception 'UNGUELTIGE_EINSTELLUNG';
+      end if;
+    end if;
     update urlaub.umfragen set
       titel = coalesce(btrim(p_daten ->> 'titel'), titel),
       frist = case
@@ -1292,6 +1307,7 @@ as $$
 declare
   v_m urlaub.mitarbeiter := urlaub.eigener_mitarbeiter(p_mitarbeiter_id);
 begin
+  insert into urlaub.widerrufene_codes (code) values (v_m.code) on conflict do nothing;
   update urlaub.mitarbeiter set code = replace(gen_random_uuid()::text, '-', '') where id = v_m.id;
 end;
 $$;
@@ -1996,7 +2012,8 @@ $$;
 --               "skala_rechts", "optionen": [{"id", "text", "aktiv"}],
 --               "regeln": [{"art", "wert", "aktiv"}], "bedingungen": [{"quelle_id", "operator", "werte", "aktiv"}]}],
 --   "mitarbeiter": [{"name", "code", "geaendert_am" (null = keine Abgabe), "antworten": {"<frage_id>": wert}}]}
--- IDs sind die alten; umfrage_aus_json schlüsselt sie um.
+-- IDs sind die alten; umfrage_aus_json schlüsselt sie um. Ein "code" wird nur übernommen, wenn er
+-- nirgends mehr vergeben und nie per „Neuer Link“ widerrufen wurde.
 
 create or replace function urlaub.umfrage_json(p_umfrage_id bigint, p_mit_mitarbeiter boolean)
 returns jsonb
@@ -2044,8 +2061,9 @@ $$;
 -- Legt aus dem Format oben eine neue Umfrage für p_organisator an (Titel p_titel oder der
 -- aus den Daten). Prüft wie der Editor: Tabellenprüfungen, erlaubte Regeln und Regelwerte,
 -- widersprüchliche Paare, Bedingungen (bedingung_werte) und die Form jeder Antwort
--- (antwort_form_ok). Link-Codes werden übernommen, wenn es sie nirgends mehr gibt, sonst
--- neu erzeugt. Fehler brechen ab (die aufrufende Funktion macht daraus ihren Code).
+-- (antwort_form_ok), Zeitpunkte (Frist, Abgabezeit) und freie Tage (wie im Editor).
+-- Link-Codes werden übernommen, wenn es sie nirgends mehr gibt und sie nie per „Neuer Link“
+-- widerrufen wurden (urlaub.widerrufene_codes), sonst neu erzeugt. Fehler brechen ab (die aufrufende Funktion macht daraus ihren Code).
 -- Rückgabe: {"id": neue Umfrage, "neue_links": Anzahl neu erzeugter Codes}.
 create or replace function urlaub.umfrage_aus_json(p_organisator uuid, p_daten jsonb, p_titel text)
 returns jsonb
@@ -2073,15 +2091,23 @@ declare
   v_neue_links int := 0;
   v_schluessel text;
   v_wert       jsonb;
+  v_frist      timestamptz;
+  v_zeit       timestamptz;
+  v_t          jsonb;
+  v_datum      date;
+  v_jahr       int;
 begin
   if jsonb_typeof(p_daten) is distinct from 'object'
      or p_daten ->> 'format' is distinct from 'urlaub-sicherung'
-     or p_daten -> 'version' is distinct from '1'::jsonb
-     or (p_daten #>> '{umfrage,frist}') ~* 'infinity' then
+     or p_daten -> 'version' is distinct from '1'::jsonb then
+    raise exception 'SICHERUNG_UNGUELTIG';
+  end if;
+  v_frist := (p_daten #>> '{umfrage,frist}')::timestamptz;
+  if v_frist is null or extract(year from v_frist) not between 2000 and 2200 then  -- auch infinity
     raise exception 'SICHERUNG_UNGUELTIG';
   end if;
   insert into urlaub.umfragen (organisator_id, titel, frist)
-  values (p_organisator, coalesce(p_titel, btrim(p_daten #>> '{umfrage,titel}')), (p_daten #>> '{umfrage,frist}')::timestamptz)
+  values (p_organisator, coalesce(p_titel, urlaub.trim_alles(p_daten #>> '{umfrage,titel}')), v_frist)
   returning id into v_id;
 
   -- Fragen, Optionen, Regeln (Position = Reihenfolge in der Datei)
@@ -2092,7 +2118,7 @@ begin
     v_pos := v_pos + 1;
     insert into urlaub.fragen (umfrage_id, position, typ, text, hilfetext, aktiv, verknuepfung, jahr, bundesland,
                                arbeitstage_pro_woche, sperr_hinweis, skala_von, skala_bis, skala_links, skala_rechts)
-    values (v_id, v_pos, v_f ->> 'typ', v_f ->> 'text', coalesce(v_f ->> 'hilfetext', ''),
+    values (v_id, v_pos, v_f ->> 'typ', urlaub.trim_alles(v_f ->> 'text'), urlaub.trim_alles(coalesce(v_f ->> 'hilfetext', '')),
             coalesce((v_f ->> 'aktiv')::boolean, true), coalesce(v_f ->> 'verknuepfung', 'und'),
             (v_f ->> 'jahr')::int, v_f ->> 'bundesland', (v_f ->> 'arbeitstage_pro_woche')::int, v_f ->> 'sperr_hinweis',
             (v_f ->> 'skala_von')::int, (v_f ->> 'skala_bis')::int, v_f ->> 'skala_links', v_f ->> 'skala_rechts')
@@ -2108,7 +2134,7 @@ begin
       end if;
       v_opos := v_opos + 1;
       insert into urlaub.optionen (frage_id, position, text, aktiv)
-      values (v_neu, v_opos, v_o ->> 'text', coalesce((v_o ->> 'aktiv')::boolean, true))
+      values (v_neu, v_opos, urlaub.trim_alles(v_o ->> 'text'), coalesce((v_o ->> 'aktiv')::boolean, true))
       returning id into v_neue_opt;
       v_optionen := v_optionen || jsonb_build_object(v_o ->> 'id', v_neue_opt);
     end loop;
@@ -2146,21 +2172,34 @@ begin
     end loop;
   end loop;
 
-  insert into urlaub.freie_tage (umfrage_id, datum, name)
-  select v_id, (t ->> 'datum')::date, btrim(t ->> 'name')
-  from jsonb_array_elements(coalesce(p_daten -> 'freie_tage', '[]')) t;
+  -- Freie Tage wie im Editor: endliches Datum im Jahr der Urlaubswochen-Frage, Name nicht leer.
+  v_jahr := (urlaub.urlaubsfrage(v_id)).jahr;
+  for v_t in select value from jsonb_array_elements(coalesce(p_daten -> 'freie_tage', '[]')) loop
+    v_datum := (v_t ->> 'datum')::date;
+    if v_datum is null or not isfinite(v_datum)
+       or (v_jahr is not null and extract(year from v_datum) <> v_jahr)
+       or coalesce(urlaub.trim_alles(v_t ->> 'name'), '') = '' then
+      raise exception 'SICHERUNG_UNGUELTIG';
+    end if;
+    insert into urlaub.freie_tage (umfrage_id, datum, name) values (v_id, v_datum, urlaub.trim_alles(v_t ->> 'name'));
+  end loop;
 
   -- Mitarbeiter, Abgaben, Antworten
   for v_m in select value from jsonb_array_elements(coalesce(p_daten -> 'mitarbeiter', '[]')) loop
     v_code := v_m ->> 'code';
-    if v_code is null or v_code !~ '^[0-9a-f]{32}$' or exists (select 1 from urlaub.mitarbeiter where code = v_code) then
+    if v_code is null or v_code !~ '^[0-9a-f]{32}$' or exists (select 1 from urlaub.mitarbeiter where code = v_code)
+       or exists (select 1 from urlaub.widerrufene_codes where code = v_code) then
       v_code := replace(gen_random_uuid()::text, '-', '');
       v_neue_links := v_neue_links + 1;
     end if;
-    insert into urlaub.mitarbeiter (umfrage_id, name, code) values (v_id, btrim(v_m ->> 'name'), v_code)
+    insert into urlaub.mitarbeiter (umfrage_id, name, code) values (v_id, urlaub.trim_alles(v_m ->> 'name'), v_code)
     returning id into v_mid;
     if (v_m ->> 'geaendert_am') is not null then
-      insert into urlaub.abgaben (mitarbeiter_id, geaendert_am) values (v_mid, (v_m ->> 'geaendert_am')::timestamptz);
+      v_zeit := (v_m ->> 'geaendert_am')::timestamptz;
+      if extract(year from v_zeit) not between 2000 and 2200 or v_zeit > now() + interval '1 day' then
+        raise exception 'SICHERUNG_UNGUELTIG';
+      end if;
+      insert into urlaub.abgaben (mitarbeiter_id, geaendert_am) values (v_mid, v_zeit);
     end if;
     for v_schluessel, v_wert in select key, value from jsonb_each(coalesce(v_m -> 'antworten', '{}')) loop
       select * into v_frage from urlaub.fragen where id = (v_fragen ->> v_schluessel)::bigint and umfrage_id = v_id;
@@ -2234,7 +2273,7 @@ begin
   begin
     return urlaub.umfrage_aus_json(v_uid, p_daten, null);
   exception when others then
-    raise exception 'SICHERUNG_UNGUELTIG';
+    raise exception 'SICHERUNG_UNGUELTIG' using detail = sqlerrm;
   end;
 end;
 $$;

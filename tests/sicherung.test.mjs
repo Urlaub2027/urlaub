@@ -143,6 +143,13 @@ test('Veränderte oder kaputte Dateien: SICHERUNG_UNGUELTIG, nichts angelegt', a
     'Antwort auf unbekannte Frage': geaendert((d) => { anna(d).antworten['999999'] = 'x'; }),
     'Namen doppelt': geaendert((d) => { d.mitarbeiter[1].name = 'ANNA'; }),
     'Abgabezeit kaputt': geaendert((d) => { anna(d).geaendert_am = 'gestern'; }),
+    'Abgabezeit unendlich': geaendert((d) => { anna(d).geaendert_am = 'infinity'; }),
+    'Abgabezeit Zukunft': geaendert((d) => { anna(d).geaendert_am = '2999-01-01T00:00:00Z'; }),
+    'Frist weit weg': { ...s, umfrage: { ...s.umfrage, frist: '280000-01-01T00:00:00Z' } },
+    'Freier Tag unendlich': geaendert((d) => { d.freie_tage[0].datum = 'infinity'; }),
+    'Freier Tag falsches Jahr': geaendert((d) => { d.freie_tage[0].datum = '2030-01-01'; }),
+    'Fragetext nur Leerraum': geaendert((d) => { frage(d, 'janein').text = '\n '; }),
+    'Name nur Leerraum': geaendert((d) => { d.mitarbeiter[1].name = ' '; }),
   };
   for (const [name, daten] of Object.entries(faelle)) {
     await assert.rejects(einspielen(daten), /SICHERUNG_UNGUELTIG/, name);
@@ -161,4 +168,16 @@ test('Sicherung: nur eigene Umfragen, nur angemeldet; Einspielen gehört dem Ein
   const r = await einspielen(s, eva);
   assert.equal((await umfrage(r.id, eva)).einstellungen.titel, 'Sicherungstest');
   await assert.rejects(umfrage(r.id, chef), /UMFRAGE_NICHT_GEFUNDEN/);
+});
+
+test('Widerrufene Links werden beim Einspielen nie wiederbelebt', async () => {
+  const { bau, codes } = await reicheUmfrage();
+  const s = await sicherung(bau.umfrageId);
+  const annaId = (await db.query('select id from urlaub.mitarbeiter where code = $1', [codes.Anna])).rows[0].id;
+  await c('select public.org_link_erneuern($1)', [annaId]);
+  await c('select public.org_umfrage_loeschen($1)', [bau.umfrageId]);
+  const r = await einspielen(s);
+  assert.equal(r.neue_links, 1);
+  await assert.rejects(browser(db, 'select public.urlaub_laden($1)', [codes.Anna]), /LINK_UNGUELTIG/);
+  assert.equal((await browser(db, 'select public.urlaub_laden($1) as r', [codes.Ben]))[0].r.name, 'Ben');
 });
