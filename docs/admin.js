@@ -1,3 +1,4 @@
+import './design.js';
 // Verwaltung: Anmeldung, Registrierung über Einladung, Umfrageliste, Konto, Organisatoren.
 import {
   $, meldung, fehlerText, knopf, element, whatsappLink, kopieren, fuelleJahre, fuelleLaender, landName,

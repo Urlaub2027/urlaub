@@ -16,24 +16,65 @@
   --feiertag: #8a5a00;
 }
 
+/* Ohne eigene Wahl folgt die Seite dem Gerät (docs/design.js setzt data-design sofort;
+   der Block hier verhindert nur ein kurzes helles Aufblitzen im dunklen Modus). */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --hintergrund: #12161c;
-    --flaeche: #1b2129;
-    --text: #e6eaf0;
-    --leise: #9aa5b4;
-    --rand: #2f3844;
-    --akzent: #4c8dff;
+  :root:not([data-design]) {
+    --hintergrund: #1a1d23;
+    --flaeche: #242830;
+    --text: #eceff4;
+    --leise: #a6aebb;
+    --rand: #353b46;
+    --akzent: #6aa3ff;
     --akzent-text: #0b1220;
-    --gewaehlt: #1d2c45;
-    --ok: #15301f;
-    --ok-rand: #3f8a5a;
-    --fehler: #3a1a1a;
-    --fehler-rand: #a85454;
-    --gesperrt: #20262e;
-    --feiertag: #e0b35c;
+    --gewaehlt: #22324d;
+    --ok: #1b3326;
+    --ok-rand: #4f9a6a;
+    --fehler: #3d2222;
+    --fehler-rand: #c26a6a;
+    --gesperrt: #2a2f37;
+    --feiertag: #e8bd6a;
   }
 }
+
+/* Design „Freundlich“: warm und hell */
+:root[data-design="freundlich"] {
+  --hintergrund: #fdf8f1;
+  --flaeche: #ffffff;
+  --text: #2b2a33;
+  --leise: #6b6470;
+  --rand: #eadfce;
+  --akzent: #0b7a7c;
+  --akzent-text: #ffffff;
+  --gewaehlt: #e0f2f0;
+  --ok: #e6f5e9;
+  --ok-rand: #6bbf85;
+  --fehler: #fdeceb;
+  --fehler-rand: #d9634a;
+  --gesperrt: #f4ede3;
+  --feiertag: #a64b22;
+}
+
+/* Design „Dunkel“: dunkel, aber weniger düster */
+:root[data-design="dunkel"] {
+  --hintergrund: #1a1d23;
+  --flaeche: #242830;
+  --text: #eceff4;
+  --leise: #a6aebb;
+  --rand: #353b46;
+  --akzent: #6aa3ff;
+  --akzent-text: #0b1220;
+  --gewaehlt: #22324d;
+  --ok: #1b3326;
+  --ok-rand: #4f9a6a;
+  --fehler: #3d2222;
+  --fehler-rand: #c26a6a;
+  --gesperrt: #2a2f37;
+  --feiertag: #e8bd6a;
+}
+
+:root[data-design="dunkel"], :root:not([data-design]) { color-scheme: light dark; }
+:root[data-design="freundlich"], :root[data-design="normal"] { color-scheme: light; }
 
 * { box-sizing: border-box; }
 
@@ -405,3 +446,16 @@ button.editor-knopf { width: auto; padding: 0 22px; justify-self: start; }
 .antwort-werte { margin: 0; padding-left: 1.2rem; }
 .antwort-werte li { margin: 0 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 #umfrage-kopieren { width: auto; padding: 0 18px; }
+
+/* Auswahl des Designs im Seitenkopf */
+.kopf { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.design-wahl { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--leise); }
+.design-wahl select {
+  font: inherit;
+  color: var(--text);
+  background: var(--flaeche);
+  border: 1px solid var(--rand);
+  border-radius: 8px;
+  padding: 4px 8px;
+  min-height: 32px;
+}

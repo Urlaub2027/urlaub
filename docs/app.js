@@ -1,3 +1,4 @@
+import './design.js';
 import { rpc } from './api.js';
 import { codeAusLink, fehlertext, zusammenfassung, zeitpunkt, gesperrteGewaehlte } from './logik.js';
 import {
