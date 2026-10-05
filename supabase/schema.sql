@@ -1569,6 +1569,7 @@ as $$
 declare
   v_f urlaub.fragen := urlaub.eigene_frage(p_frage_id);
 begin
+  perform 1 from urlaub.umfragen where id = v_f.umfrage_id for update;
   update urlaub.fragen set aktiv = coalesce(p_aktiv, aktiv) where id = v_f.id;
 end;
 $$;

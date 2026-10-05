@@ -8,11 +8,16 @@ const enc = new TextEncoder();
 
 // In XML 1.0 ungültig: Steuerzeichen außer Tab/Zeilenumbruch, U+FFFE, U+FFFF und
 // einzelne (nicht gepaarte) Surrogate. Gepaarte Surrogate (z. B. Emoji) bleiben.
-const UNGUELTIG = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+// Ohne Lookbehind (Safari/iOS < 16.4 würde sonst schon beim Parsen scheitern): gültige Paare
+// werden als Treffer erkannt und unverändert zurückgegeben, alles andere entfällt.
+const UNGUELTIG = /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]|[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
+
+export function bereinige(text) {
+  return String(text).replace(UNGUELTIG, (m) => (m.length === 2 ? m : ''));
+}
 
 function xml(text) {
-  return String(text)
-    .replace(UNGUELTIG, '')
+  return bereinige(text)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 

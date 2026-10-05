@@ -5,7 +5,7 @@ import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { erzeugeXlsx } from '../docs/xlsx.js';
+import { erzeugeXlsx, bereinige } from '../docs/xlsx.js';
 import { excelBlaetter } from '../docs/auswertung.js';
 
 const kalender = Array.from({ length: 52 }, (_, i) => ({
@@ -88,3 +88,12 @@ print(json.dumps([list(row) for row in wb['Antworten'].iter_rows(values_only=Tru
     assert.equal(zeilen[1][0], 'Cleoabcdef 😀');
     assert.equal(zeilen[1][3], 'abcdef 😀');
   });
+
+test('bereinige: nur ungültige Zeichen entfallen, gültige Paare bleiben', () => {
+  assert.equal(bereinige('a\uD83Db'), 'ab', 'einzelnes hohes Surrogat');
+  assert.equal(bereinige('a\uDE00b'), 'ab', 'einzelnes tiefes Surrogat');
+  assert.equal(bereinige('a\uDE00\uD83Db'), 'ab', 'vertauschtes Paar');
+  assert.equal(bereinige('a\u{1F600}b'), 'a\u{1F600}b', 'gültiges Paar bleibt');
+  assert.equal(bereinige('a￾b￿c'), 'abc');
+  assert.equal(bereinige('\t\n\r�\u0001\u000B'), '\t\n\r�');
+});
