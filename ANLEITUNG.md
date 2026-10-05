@@ -73,6 +73,10 @@ gespeicherte Abgaben bleiben gültig.
    ```
 
    Den angezeigten Link öffnen und registrieren – dieses Konto wird Hauptadmin.
+5. GitHub → Repo → **Actions**: Fragt GitHub, ob Workflows aktiviert werden sollen,
+   bestätigen. Den Workflow „Datenbank wachhalten“ öffnen → **Run workflow** → einmal von
+   Hand starten (wie im Update-Abschnitt oben), sonst pausiert Supabase die Datenbank
+   nach einiger Zeit ohne Zugriffe.
 
 ## Teil C – Im Alltag
 
@@ -199,9 +203,11 @@ Solange die Frist läuft, gibt es zwei Hilfen für Nachzügler:
 - **Einspielen:** **Meine Umfragen** → Kasten **Sicherung einspielen** → Feld
   „Sicherungsdatei (.json)“ → **Einspielen** (höchstens 5 MB, vorher kommt eine Rückfrage).
   Es entsteht eine neue Umfrage.
-- **Alte Links:** Die Links der Mitarbeiter gehen wieder, wenn die ursprüngliche Umfrage
-  gelöscht ist und der Link nicht mit **Neuer Link** ersetzt wurde. Sonst entstehen neue
-  Links; die Meldung nennt, wie viele. Diese musst du neu verschicken.
+- **Alte Links:** Die Links der Mitarbeiter gehen wieder, wenn die ganze ursprüngliche
+  Umfrage gelöscht ist – außer für Mitarbeiter, deren Link per **Neuer Link** ersetzt wurde
+  oder die einzeln gelöscht wurden. Die bekommen neue Links, ebenso alle, wenn die
+  ursprüngliche Umfrage noch existiert; die Meldung nennt, wie viele. Diese musst du neu
+  verschicken.
 - **Empfehlung:** Nach Ablauf der Frist einmal sichern.
 
 ### Wach-Automatik

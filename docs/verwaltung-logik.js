@@ -19,7 +19,7 @@ export function vorlagenTitel(name, jahr, heute = new Date()) {
 
 // Ein Name pro Zeile; Leerraum an den Enden und leere Zeilen fallen weg.
 export function namenAusText(text) {
-  return String(text ?? '').split(/\r?\n/).map((z) => z.trim()).filter(Boolean);
+  return String(text ?? '').split(/\r?\n/).map((z) => z.replace(/\s+/g, ' ').trim()).filter(Boolean);
 }
 
 export function erinnerungsText(name, titel, frist, link) {

@@ -147,7 +147,11 @@ test('Veränderte oder kaputte Dateien: SICHERUNG_UNGUELTIG, nichts angelegt', a
     'Abgabezeit Zukunft': geaendert((d) => { anna(d).geaendert_am = '2999-01-01T00:00:00Z'; }),
     'Frist weit weg': { ...s, umfrage: { ...s.umfrage, frist: '280000-01-01T00:00:00Z' } },
     'Freier Tag unendlich': geaendert((d) => { d.freie_tage[0].datum = 'infinity'; }),
-    'Freier Tag falsches Jahr': geaendert((d) => { d.freie_tage[0].datum = '2030-01-01'; }),
+    'Antworten ohne Abgabe': geaendert((d) => {
+      const cem = d.mitarbeiter.find((m) => m.name === 'Cem');
+      cem.antworten = { [frage(d, 'janein').id]: true };
+      cem.geaendert_am = null;
+    }),
     'Fragetext nur Leerraum': geaendert((d) => { frage(d, 'janein').text = '\n '; }),
     'Name nur Leerraum': geaendert((d) => { d.mitarbeiter[1].name = ' '; }),
   };
@@ -175,6 +179,40 @@ test('Widerrufene Links werden beim Einspielen nie wiederbelebt', async () => {
   const s = await sicherung(bau.umfrageId);
   const annaId = (await db.query('select id from urlaub.mitarbeiter where code = $1', [codes.Anna])).rows[0].id;
   await c('select public.org_link_erneuern($1)', [annaId]);
+  await c('select public.org_umfrage_loeschen($1)', [bau.umfrageId]);
+  const r = await einspielen(s);
+  assert.equal(r.neue_links, 1);
+  await assert.rejects(browser(db, 'select public.urlaub_laden($1)', [codes.Anna]), /LINK_UNGUELTIG/);
+  assert.equal((await browser(db, 'select public.urlaub_laden($1) as r', [codes.Ben]))[0].r.name, 'Ben');
+});
+
+test('Freier Tag in anderem Jahr: Kopieren und Einspielen nehmen jeden Editor-Zustand an', async () => {
+  const bau = await baueUmfrage(db, chef, { titel: 'Jahreswechsel', fragen: [{ key: 'wochen', typ: 'urlaubswochen', jahr: 2027 }] });
+  await db.query("insert into urlaub.freie_tage (umfrage_id, datum, name) values ($1, '2027-08-08', 'Betriebsruhe')", [bau.umfrageId]);
+  const k1 = (await c('select public.org_umfrage_kopieren($1) as id', [bau.umfrageId])).id;
+  const uw = (await umfrage(k1)).fragen.find((f) => f.typ === 'urlaubswochen').id;
+  await c('select public.org_frage_speichern($1, $2)', [uw, { jahr: 2028 }]);
+  const k2 = (await c('select public.org_umfrage_kopieren($1) as id', [k1])).id;
+  const s = await sicherung(k2);
+  await c('select public.org_umfrage_loeschen($1)', [k2]);
+  const r = await einspielen(s);
+  const tage = (await db.query('select datum::text as d from urlaub.freie_tage where umfrage_id = $1', [r.id])).rows;
+  assert.deepEqual(tage.map((t) => t.d), ['2027-08-08']);
+});
+
+test('Frist im Jahr 3000 wird eingespielt, Frist weit weg nicht', async () => {
+  const { bau } = await reicheUmfrage();
+  const s = await sicherung(bau.umfrageId);
+  const r = await einspielen({ ...s, umfrage: { ...s.umfrage, frist: '3000-01-01T00:00:00Z' } });
+  assert.ok(r.id);
+  await assert.rejects(einspielen({ ...s, umfrage: { ...s.umfrage, frist: '280000-01-01T00:00:00Z' } }), /SICHERUNG_UNGUELTIG/);
+});
+
+test('Gelöschte Mitarbeiter: der alte Link bleibt beim Einspielen widerrufen', async () => {
+  const { bau, codes } = await reicheUmfrage();
+  const s = await sicherung(bau.umfrageId);
+  const annaId = (await db.query('select id from urlaub.mitarbeiter where code = $1', [codes.Anna])).rows[0].id;
+  await c('select public.org_mitarbeiter_loeschen($1)', [annaId]);
   await c('select public.org_umfrage_loeschen($1)', [bau.umfrageId]);
   const r = await einspielen(s);
   assert.equal(r.neue_links, 1);

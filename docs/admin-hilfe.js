@@ -17,6 +17,7 @@ const FEHLER = {
   NAME_LEER: 'Bitte einen Namen eingeben.',
   NAME_DOPPELT: 'Diesen Namen gibt es schon (in der Umfrage oder doppelt in deiner Liste). Bitte unterscheide ihn, z. B. „Anna K.“ und „Anna M.“.',
   ZU_VIELE_NAMEN: 'Höchstens 200 Namen auf einmal.',
+  KOPIEREN_FEHLGESCHLAGEN: 'Die Umfrage ließ sich nicht kopieren. Bitte versuch es noch einmal oder melde den Fehler.',
   SICHERUNG_UNGUELTIG: 'Die Datei ist keine gültige Sicherung oder wurde verändert. Es wurde nichts angelegt.',
   TITEL_LEER: 'Bitte einen Titel eingeben.',
   FRIST_LEER: 'Bitte eine Frist mit Datum und Uhrzeit eingeben.',

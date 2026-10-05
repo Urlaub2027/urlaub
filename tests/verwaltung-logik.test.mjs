@@ -21,6 +21,7 @@ test('Titelvorschlag je Vorlage', () => {
 
 test('Namen aus eingefügtem Text (z. B. aus Excel)', () => {
   assert.deepEqual(namenAusText('  Anna Huber\r\n\r\nBen Maier\t\n   \nCem'), ['Anna Huber', 'Ben Maier', 'Cem']);
+  assert.deepEqual(namenAusText('Anna\tHuber\r\nBen   Maier'), ['Anna Huber', 'Ben Maier']);
   assert.deepEqual(namenAusText(''), []);
   assert.deepEqual(namenAusText(null), []);
 });

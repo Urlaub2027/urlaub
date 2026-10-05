@@ -58,6 +58,7 @@ test('Mitarbeiter-Liste: trimmt, überspringt Leerzeilen, ganz oder gar nicht', 
   assert.deepEqual(await namen(), ['Anna Huber', 'Ben Maier']);
   await assert.rejects(liste(['Cem', 'anna huber']), (e) => e.message === 'NAME_DOPPELT' && e.detail === 'anna huber');
   await assert.rejects(liste(['Cem', 'Dora', ' CEM ']), (e) => e.message === 'NAME_DOPPELT' && e.detail === 'CEM');
+  await assert.rejects(liste(['Anna\tHuber']), (e) => e.message === 'NAME_DOPPELT' && e.detail === 'Anna Huber');
   assert.deepEqual(await namen(), ['Anna Huber', 'Ben Maier']);
   await assert.rejects(liste(['', '  ']), /NAME_LEER/);
   await assert.rejects(liste([]), /NAME_LEER/);

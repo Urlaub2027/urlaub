@@ -179,7 +179,7 @@ create table if not exists urlaub.lebenszeichen (
   zeit timestamptz not null default now()
 );
 
--- Codes, die per „Neuer Link“ widerrufen wurden: werden beim Einspielen einer Sicherung nie wiederverwendet.
+-- Codes, die per „Neuer Link“ oder durch Löschen eines Mitarbeiters widerrufen wurden: werden beim Einspielen einer Sicherung nie wiederverwendet.
 create table if not exists urlaub.widerrufene_codes (
   code          text primary key,
   widerrufen_am timestamptz not null default now()
@@ -1260,8 +1260,10 @@ declare
   v_namen text[];
   v_name  text;
 begin
+  -- Leerraum innerhalb eines Namens (z. B. Tabulator aus Excel) wird zu einem Leerzeichen
   select coalesce(array_agg(s.n order by s.i), '{}') into v_namen
-  from (select urlaub.trim_alles(t.x) as n, t.i from unnest(p_namen) with ordinality as t (x, i)) s
+  from (select regexp_replace(urlaub.trim_alles(t.x), '\s+', ' ', 'g') as n, t.i
+        from unnest(p_namen) with ordinality as t (x, i)) s
   where s.n is not null and s.n <> '';
   if cardinality(v_namen) = 0 then
     raise exception 'NAME_LEER';
@@ -1293,6 +1295,8 @@ as $$
 declare
   v_m urlaub.mitarbeiter := urlaub.eigener_mitarbeiter(p_mitarbeiter_id);
 begin
+  -- Der Link gilt ab jetzt als widerrufen: eine ältere Sicherung belebt ihn nicht wieder.
+  insert into urlaub.widerrufene_codes (code) values (v_m.code) on conflict do nothing;
   delete from urlaub.mitarbeiter where id = v_m.id;  -- Abgabe wird mitgelöscht
 end;
 $$;
@@ -2063,7 +2067,7 @@ $$;
 -- widersprüchliche Paare, Bedingungen (bedingung_werte) und die Form jeder Antwort
 -- (antwort_form_ok), Zeitpunkte (Frist, Abgabezeit) und freie Tage (wie im Editor).
 -- Link-Codes werden übernommen, wenn es sie nirgends mehr gibt und sie nie per „Neuer Link“
--- widerrufen wurden (urlaub.widerrufene_codes), sonst neu erzeugt. Fehler brechen ab (die aufrufende Funktion macht daraus ihren Code).
+-- widerrufen wurden („Neuer Link“ oder Löschen des Mitarbeiters, urlaub.widerrufene_codes), sonst neu erzeugt. Fehler brechen ab (die aufrufende Funktion macht daraus ihren Code).
 -- Rückgabe: {"id": neue Umfrage, "neue_links": Anzahl neu erzeugter Codes}.
 create or replace function urlaub.umfrage_aus_json(p_organisator uuid, p_daten jsonb, p_titel text)
 returns jsonb
@@ -2095,7 +2099,6 @@ declare
   v_zeit       timestamptz;
   v_t          jsonb;
   v_datum      date;
-  v_jahr       int;
 begin
   if jsonb_typeof(p_daten) is distinct from 'object'
      or p_daten ->> 'format' is distinct from 'urlaub-sicherung'
@@ -2103,7 +2106,8 @@ begin
     raise exception 'SICHERUNG_UNGUELTIG';
   end if;
   v_frist := (p_daten #>> '{umfrage,frist}')::timestamptz;
-  if v_frist is null or extract(year from v_frist) not between 2000 and 2200 then  -- auch infinity
+  -- Weiter als der Editor (2000–2200 für neue Werte): alles, was JavaScript darstellen kann; auch infinity fliegt raus.
+  if v_frist is null or not isfinite(v_frist) or extract(year from v_frist) not between 1900 and 9999 then
     raise exception 'SICHERUNG_UNGUELTIG';
   end if;
   insert into urlaub.umfragen (organisator_id, titel, frist)
@@ -2172,12 +2176,11 @@ begin
     end loop;
   end loop;
 
-  -- Freie Tage wie im Editor: endliches Datum im Jahr der Urlaubswochen-Frage, Name nicht leer.
-  v_jahr := (urlaub.urlaubsfrage(v_id)).jahr;
+  -- Freie Tage: endliches Datum, Name nicht leer. Das Jahr wird nicht geprüft: der Editor erlaubt
+  -- es, das Jahr der Urlaubswochen-Frage nachträglich zu ändern.
   for v_t in select value from jsonb_array_elements(coalesce(p_daten -> 'freie_tage', '[]')) loop
     v_datum := (v_t ->> 'datum')::date;
     if v_datum is null or not isfinite(v_datum)
-       or (v_jahr is not null and extract(year from v_datum) <> v_jahr)
        or coalesce(urlaub.trim_alles(v_t ->> 'name'), '') = '' then
       raise exception 'SICHERUNG_UNGUELTIG';
     end if;
@@ -2200,6 +2203,8 @@ begin
         raise exception 'SICHERUNG_UNGUELTIG';
       end if;
       insert into urlaub.abgaben (mitarbeiter_id, geaendert_am) values (v_mid, v_zeit);
+    elsif jsonb_typeof(v_m -> 'antworten') = 'object' and v_m -> 'antworten' <> '{}'::jsonb then
+      raise exception 'SICHERUNG_UNGUELTIG';  -- Antworten ohne Abgabe gibt es nicht
     end if;
     for v_schluessel, v_wert in select key, value from jsonb_each(coalesce(v_m -> 'antworten', '{}')) loop
       select * into v_frage from urlaub.fragen where id = (v_fragen ->> v_schluessel)::bigint and umfrage_id = v_id;
@@ -2241,8 +2246,12 @@ as $$
 declare
   v_u urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
 begin
-  return (urlaub.umfrage_aus_json(v_u.organisator_id, urlaub.umfrage_json(v_u.id, false),
-                                  'Kopie von ' || v_u.titel) ->> 'id')::bigint;
+  begin
+    return (urlaub.umfrage_aus_json(v_u.organisator_id, urlaub.umfrage_json(v_u.id, false),
+                                    'Kopie von ' || v_u.titel) ->> 'id')::bigint;
+  exception when others then
+    raise exception 'KOPIEREN_FEHLGESCHLAGEN' using detail = sqlerrm;
+  end;
 end;
 $$;
 
