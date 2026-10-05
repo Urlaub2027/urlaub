@@ -98,15 +98,6 @@ export function gesperrteZeitraeume(kalender) {
   return zeitraeume;
 }
 
-export function regelText(d) {
-  const basis = `mindestens ${d.min_wochen}, höchstens ${d.max_wochen} Wochen`;
-  return d.max_am_stueck < d.max_wochen ? `${basis}, davon höchstens ${d.max_am_stueck} am Stück` : basis;
-}
-
-export function gleicheAuswahl(a, b) {
-  return a.size === b.size && [...a].every((kw) => b.has(kw));
-}
-
 const DATUM = new Intl.DateTimeFormat('de-DE', {
   timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric',
   hour: '2-digit', minute: '2-digit',

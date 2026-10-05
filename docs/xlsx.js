@@ -6,9 +6,13 @@
 
 const enc = new TextEncoder();
 
+// In XML 1.0 ungültig: Steuerzeichen außer Tab/Zeilenumbruch, U+FFFE, U+FFFF und
+// einzelne (nicht gepaarte) Surrogate. Gepaarte Surrogate (z. B. Emoji) bleiben.
+const UNGUELTIG = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 function xml(text) {
   return String(text)
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(UNGUELTIG, '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 

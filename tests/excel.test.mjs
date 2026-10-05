@@ -66,3 +66,25 @@ test('Excel-Datei ohne Urlaubswochen hat nur das Blatt „Antworten“', { skip:
   const blaetter = excelBlaetter(ohne);
   assert.deepEqual(blaetter.map((b) => b.name), ['Antworten']);
 });
+
+test('Excel-Datei: in XML ungültige Zeichen (U+FFFE, U+FFFF, einzelne Surrogate) werden entfernt',
+  { skip: python.status !== 0 && 'python/openpyxl nicht verfügbar' }, () => {
+    const boese = 'a￾b￿c\uD800d\uDC00e\u0001f 😀';
+    const mit = {
+      kalender: [],
+      fragen: [{ id: 5, typ: 'text_kurz', text: `Notiz${boese}`, aktiv: true, optionen: [], regeln: {}, bedingungen: [] }],
+      mitarbeiter: [{ id: 1, name: `Cleo${boese}`, link: 'x', geaendert_am: null, antworten: { 5: boese }, verstoesse: {} }],
+    };
+    const datei = join(mkdtempSync(join(tmpdir(), 'urlaub-')), 'boese.xlsx');
+    writeFileSync(datei, erzeugeXlsx(excelBlaetter(mit)));
+    const r = spawnSync('python', ['-c', `
+import json, sys, openpyxl
+wb = openpyxl.load_workbook(sys.argv[1])
+print(json.dumps([list(row) for row in wb['Antworten'].iter_rows(values_only=True)], ensure_ascii=True))
+`, datei], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const zeilen = JSON.parse(r.stdout);
+    assert.equal(zeilen[0][3], 'Notizabcdef 😀');
+    assert.equal(zeilen[1][0], 'Cleoabcdef 😀');
+    assert.equal(zeilen[1][3], 'abcdef 😀');
+  });

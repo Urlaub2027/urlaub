@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, gleicheAuswahl, zeitpunkt,
-  folgeLaenge, gesperrteZeitraeume, regelText, gesperrteGewaehlte,
+  codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, zeitpunkt,
+  folgeLaenge, gesperrteZeitraeume, gesperrteGewaehlte,
 } from '../docs/logik.js';
 
 const kalender = [
@@ -41,8 +41,6 @@ test('Gruppierung nach Monaten', () => {
 });
 
 test('Hilfsfunktionen', () => {
-  assert.equal(gleicheAuswahl(new Set([1, 2]), new Set([2, 1])), true);
-  assert.equal(gleicheAuswahl(new Set([1]), new Set([1, 2])), false);
   assert.match(fehlertext('ZU_VIELE_WOCHEN'), /zu viele Wochen/);
   assert.match(fehlertext('IRGENDWAS'), /später/);
   assert.equal(zeitpunkt('2026-11-30T22:59:59Z'), '30.11.2026, 23:59 Uhr');
@@ -83,13 +81,6 @@ test('gesperrteZeitraeume fasst aufeinanderfolgende KWs zusammen', () => {
   ]);
   assert.deepEqual(gesperrteZeitraeume([k(51, false), k(52, true), k(53, true)]),
     [{ vonKw: 52, bisKw: 53, von: 'v52', bis: 'b53' }]);
-});
-
-test('Regeltext', () => {
-  assert.equal(regelText({ min_wochen: 1, max_wochen: 6, max_am_stueck: 3 }),
-    'mindestens 1, höchstens 6 Wochen, davon höchstens 3 am Stück');
-  assert.equal(regelText({ min_wochen: 2, max_wochen: 4, max_am_stueck: 4 }),
-    'mindestens 2, höchstens 4 Wochen');
 });
 
 test('Neue Fehlertexte', () => {
