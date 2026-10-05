@@ -17,41 +17,27 @@ Programmierkenntnisse. Menüs bei Supabase und GitHub können leicht anders hei�
 
 ---
 
-## Teil A – Umstellung der bestehenden Installation (einmalig)
+## Teil A – Umstellung von Stand 2 auf Stand 3 (einmalig)
 
-0. **Vorab prüfen:** Im SQL Editor ausführen:
-
-   ```sql
-   select a.user_id, u.email from urlaub.admins a join auth.users u on u.id = a.user_id;
-   ```
-
-   Erwartet: genau eine Zeile mit `aw@example.com`. Wenn nicht: **abbrechen und nachfragen**.
+Stand 3 bringt den Fragen-Baukasten. Eine Vorabprüfung ist nicht nötig.
 
 1. Supabase → **SQL Editor** → „New query“ → kompletten Inhalt von `supabase/schema.sql`
-   einfügen → **Run**. Erwartet: „Success. No rows returned“.
-   Die bisherige Umfrage wird dabei zu „Urlaubswünsche 2027“; alle Mitarbeiter-Links
-   bleiben gültig; das Konto `aw` wird Hauptadmin.
+   einfügen → **Run**. Erwartet: „Success“.
+   Fragt Supabase nach einer Bestätigung, weil die Datei Löschbefehle für alte
+   Bestandteile enthält, mit „Run this query“ bestätigen.
+2. Zur Kontrolle die Datei direkt ein zweites Mal ausführen – es muss wieder „Success“ erscheinen.
+3. Die **Auth-Einstellungen** (Supabase → Authentication → Sign In / Providers) bleiben
+   wie sie sind: Registrierung an, Confirm email aus, anonyme Anmeldung aus.
 
-   Fragt Supabase nach einer Bestätigung, weil die Datei Löschbefehle für alte Bestandteile enthält, mit „Run this query“ bestätigen.
-
-   Falls der SQL Editor eine Meldung mit „UMSTELLUNG abgebrochen“ zeigt, wurde nichts verändert. Die Meldung nennt den Grund (z. B. zwei Mitarbeiter, deren Namen sich nur in Groß-/Kleinschreibung unterscheiden). Den Grund beheben und die Datei erneut ausführen.
-
-2. Supabase → **Authentication** → **Sign In / Providers**:
-   - **Allow new users to sign up: an** (nötig für Einladungen – die Datenbank lehnt
-     jede Registrierung ohne gültige Einladung ab)
-   - **Confirm email: aus** (es werden keine E-Mails verschickt)
-   - **Allow anonymous sign-ins: aus**
-   - **Save changes**
-3. Neue Konten entstehen **nur noch über Einladungslinks**. „Add user“ im Supabase-
-   Dashboard funktioniert dafür nicht mehr.
-4. Zur Kontrolle die Datei direkt ein zweites Mal ausführen – es muss wieder „Success“ erscheinen.
-
-**Hinweis:** Die Regel „höchstens 3 Wochen am Stück“ gilt ab der Umstellung auch für die bestehende Umfrage. Bereits gespeicherte Abgaben bleiben erhalten; verstößt eine dagegen, wird sie in der Verwaltung markiert.
+**Was sich dadurch ändert:** Jede bestehende Umfrage hat danach eine Frage
+**„Urlaubswochen“** mit ihren bisherigen Regeln (Jahr, Bundesland, Arbeitstage,
+Wochen- und „am Stück“-Grenzen, gesperrte Monate). Mitarbeiter-Links und bereits
+gespeicherte Abgaben bleiben gültig.
 
 ## Teil B – Neuinstallation (nur für eine komplett neue Kopie)
 
 1. Supabase-Projekt anlegen (Region Frankfurt), `supabase/schema.sql` im SQL Editor ausführen.
-2. Authentication wie in Teil A Schritt 2 einstellen.
+2. Authentication einstellen: Allow new users to sign up **an** (nötig für Einladungen), Confirm email **aus**, Allow anonymous sign-ins **aus**.
 3. In `docs/config.js` Project URL und Publishable key eintragen; die Seite auf GitHub
    Pages veröffentlichen (Settings → Pages → Branch `main`, Ordner `/docs`).
 4. Adresse der Seite eintragen und den ersten Zugang erzeugen – im SQL Editor:
@@ -68,12 +54,67 @@ Programmierkenntnisse. Menüs bei Supabase und GitHub können leicht anders hei�
 ### Umfrage anlegen
 
 Verwaltung → **Meine Umfragen** → Titel, Jahr, Bundesland → **Umfrage anlegen**.
-Dann im Reiter **Einstellungen** prüfen: Frist, Urlaubstage, Wochen (mindestens,
-höchstens, höchstens am Stück), gesperrte Monate mit Hinweis, Arbeitstage pro Woche.
-Örtliche Feiertage (z. B. Augsburger Friedensfest) unter **Zusätzliche freie Tage**.
+Eine neue Umfrage hat zunächst eine Frage „Urlaubswochen“. Jede Umfrage hat vier Reiter:
+**Fragen**, **Mitarbeiter**, **Antworten**, **Einstellungen**.
 
-Jahr, Bundesland und Arbeitstage pro Woche lassen sich nur ändern, solange noch
-niemand abgegeben hat.
+### Fragen bearbeiten
+
+Im Reiter **Fragen** baust du das Formular, das die Mitarbeiter sehen.
+
+- **Vorschau** (oben): zeigt das Formular so, wie Mitarbeiter es sehen. Eingaben dort werden nicht gespeichert.
+- **Frage hinzufügen:** Typ wählen, **Hinzufügen** klicken, dann **Bearbeiten**.
+- **Schalter „aktiv“:** ausgeschaltet = für Mitarbeiter unsichtbar, bleibt aber gespeichert
+  (auch mit Antworten). Das gilt ebenso für Antwortmöglichkeiten, Prüfregeln und Bedingungen.
+- **↑ / ↓:** Reihenfolge ändern.
+- **Löschen:** nur möglich, solange es keine Antworten gibt. Sonst steht an der Frage
+  „hat Antworten – nur ausschalten möglich“.
+
+**Fragetypen**
+
+| Typ | Wofür |
+|---|---|
+| Urlaubswochen | Wochenwahl im Kalender. Höchstens eine pro Umfrage. Hier stehen auch Jahr, Bundesland und Arbeitstage pro Woche (nur änderbar, solange noch niemand Wochen gewählt hat). |
+| Einfachauswahl | Eine Antwort aus einer Liste |
+| Mehrfachauswahl | Mehrere Antworten aus einer Liste |
+| Ja/Nein | Eine Ja/Nein-Frage |
+| Skala | Zahl auf einer Skala, optional mit Beschriftung links und rechts |
+| Kurzer Text | Eine Zeile Text |
+| Langer Text | Mehrzeiliger Text |
+| Zahl | Eine Zahl |
+| Datum | Ein Datum |
+| Hinweistext | Nur Text zum Lesen, keine Antwort |
+
+**Bearbeiten:** Fragetext, Hilfetext (optional), Antwortmöglichkeiten (bei Einfach-/
+Mehrfachauswahl, je mit eigenem Schalter, ↑/↓ und Löschen), Prüfregeln und Bedingungen.
+Der Typ lässt sich nicht mehr ändern, sobald es Antworten gibt.
+
+**Prüfregeln:** Jede Regel hat einen eigenen Schalter; nur eingeschaltete Regeln prüft die
+Datenbank beim Absenden. Änderungen werden sofort gespeichert. Beispiele:
+Pflichtfrage, Mindestens/Höchstens auswählen, Höchstens Zeichen, Kleinste/Größte Zahl,
+Frühestens/Spätestens (Datum). Bei **Urlaubswochen** außerdem: Mindestens Wochen,
+Höchstens Wochen, Höchstens Wochen am Stück, Höchstens Urlaubstage, **Gesperrte Monate**
+(mit Hinweis) und **Gesperrte Wochen** (einzelne Kalenderwochen). Gesperrte Monate und
+Gesperrte Wochen sind unabhängig voneinander ein- und ausschaltbar.
+
+**Bedingungen:** Eine Frage kann nur erscheinen, wenn früher gestellte Fragen passend
+beantwortet wurden.
+
+- Als Auslöser sind nur **frühere** Fragen der Typen Einfachauswahl, Mehrfachauswahl,
+  Ja/Nein, Skala und Zahl möglich.
+- Mehrere Bedingungen verknüpfst du mit **und** (alle müssen zutreffen) oder **oder**
+  (eine reicht). Jede Bedingung hat einen eigenen Schalter.
+- Ist die Auslöser-Frage unbeantwortet oder selbst ausgeblendet, gilt die Bedingung als nicht erfüllt.
+- Beispiel: Frage 1 „Hast du Kinder?“ (Ja/Nein). Frage 2 „Welche Ferienwochen brauchst du?“
+  mit der Bedingung „Wenn ‚Hast du Kinder?‘ = Ja“. Nur wer Ja antwortet, sieht Frage 2.
+- Antworten auf Fragen, die beim Absenden ausgeblendet sind, werden verworfen.
+  „Pflicht“ gilt nur für sichtbare Fragen.
+
+### Einstellungen
+
+Reiter **Einstellungen**: **Titel**, **Frist**, **Zusätzliche freie Tage** (z. B. Augsburger
+Friedensfest; sie kosten keinen Urlaubstag), **Umfrage kopieren** (neue Umfrage mit allen
+Fragen, Regeln, Bedingungen und freien Tagen – ohne Mitarbeiter und Antworten) und
+**Umfrage löschen**.
 
 ### Mitarbeiter anlegen und Links verschicken
 
@@ -91,13 +132,18 @@ und Passwort selbst.
 - Oben: wie viele schon abgegeben haben.
 - Reiter **Mitarbeiter**: gewählte Wochen, Urlaubstage, letzte Änderung. Eine Warnung
   erscheint, wenn eine Abgabe gegen später verschärfte Regeln verstößt.
-- Reiter **Wochen**: Anzahl und Namen pro KW; volle Wochen sind rot hinterlegt.
-- **Excel herunterladen**: Blätter *Personen*, *Wochen* und *Matrix* (Namen × KW).
+- Reiter **Antworten**: Zusammenfassung je Frage. Ausgeschaltete Fragen und
+  Antwortmöglichkeiten sind mit „(aus)“ markiert. Bei einer Urlaubswochen-Frage: Anzahl
+  und Namen pro KW; volle Wochen sind rot hinterlegt.
+- **Excel herunterladen**: Blatt *Antworten*; gibt es eine Urlaubswochen-Frage, zusätzlich
+  *Wochen* und *Matrix* (Namen × KW).
 
 ### Probleme
 
 | Was passiert | Was tun |
 |---|---|
+| Frage lässt sich nicht löschen | Sie hat Antworten oder wird in einer Bedingung einer anderen Frage verwendet. Ausschalten bzw. die Bedingung entfernen. |
+| Frage lässt sich nicht verschieben | Bedingungen dürfen nur auf frühere Fragen zeigen. Bedingung anpassen oder entfernen. |
 | Ein Mitarbeiter-Link wurde weitergegeben oder ist verloren | Beim Namen **Neuer Link** → neu verschicken. Abgabe bleibt erhalten. |
 | Jemand will seine Abgabe ganz zurückziehen | Person löschen und neu anlegen (neuer Link). |
 | Seite meldet „Keine Verbindung“ für alle | Supabase pausiert kostenlose Projekte nach ca. 1 Woche ohne Aufrufe. Bei Supabase anmelden → Projekt → **Restore project**. Daten bleiben erhalten. |
@@ -111,7 +157,7 @@ und Passwort selbst.
 
 ## Datenschutz und Sicherheit in Kürze
 
-- Gespeichert werden: Name und Zufallscode der Mitarbeiter, gewählte Wochen, Zeitpunkt
+- Gespeichert werden: Name und Zufallscode der Mitarbeiter, gewählte Wochen und Antworten auf die Fragen, Zeitpunkt
   der letzten Änderung; für Organisatoren Anzeigename und Benutzername.
 - Keine Cookies, kein Tracking, keine fremden Schriften oder Skripte.
 - Mitarbeiter sehen nur ihren eigenen Eintrag; Organisatoren nur ihre eigenen Umfragen.

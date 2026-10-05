@@ -1,9 +1,11 @@
 # Urlaubswünsche 2027
 
 Kleine Web-App, in der Mitarbeiter über einen persönlichen Link ihre Urlaubswochen
-wünschen. Organisatoren legen eigene Umfragen an (Jahr, Bundesland, Urlaubstage,
-Wochen- und „am Stück"-Grenzen, gesperrte Monate) und laden weitere Organisatoren
-per Einladungslink ein. Einrichtung und Bedienung: [ANLEITUNG.md](ANLEITUNG.md).
+wünschen. Organisatoren legen eigene Umfragen an und stellen das Formular im
+Fragen-Baukasten selbst zusammen (Fragetypen wie Urlaubswochen, Auswahl, Ja/Nein,
+Skala, Text, Zahl, Datum; Prüfregeln, Bedingungen, Vorschau, Umfrage kopieren). Die
+Urlaubswochen-Frage bringt Jahr, Bundesland, Wochengrenzen und gesperrte Monate/Wochen
+mit. Weitere Organisatoren werden per Einladungslink eingeladen. Einrichtung und Bedienung: [ANLEITUNG.md](ANLEITUNG.md).
 
 ## Aufbau
 
@@ -15,7 +17,7 @@ per Einladungslink ein. Einrichtung und Bedienung: [ANLEITUNG.md](ANLEITUNG.md).
 
 Sicherheitsprinzip: Tabellen liegen im Schema `urlaub`, auf das die Rollen `anon`
 und `authenticated` keinen Zugriff haben. Der Browser ruft nur `SECURITY DEFINER`-
-Funktionen in `public` auf: `urlaub_*` (Mitarbeiter-Code), `einladung_pruefen`,
+Funktionen in `public` auf: `urlaub_*` (Mitarbeiter-Code), darunter `umfrage_absenden` (prüft und speichert eine Abgabe serverseitig), `einladung_pruefen`,
 `org_*` (nur eigene Umfragen), `haupt_*` (nur Hauptadmin). Registrierungen ohne
 gültige Einladung lehnt ein Trigger auf `auth.users` ab.
 
