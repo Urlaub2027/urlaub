@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, gleicheAuswahl, zeitpunkt,
-  folgeLaenge, gesperrteBereiche, regelText, gesperrteGewaehlte,
+  folgeLaenge, gesperrteZeitraeume, regelText, gesperrteGewaehlte,
 } from '../docs/logik.js';
 
 const kalender = [
@@ -63,18 +63,26 @@ test('Kästchen, das die Folge zu lang machen würde, ist gesperrt', () => {
   assert.equal(istGesperrt(11, auswahl, false, true, 3), false); // abwählen geht immer
 });
 
-test('Gesperrte Wochen erscheinen nicht in den Monaten, sondern als Bereiche', () => {
+test('Gesperrte Wochen erscheinen nicht in den Monaten', () => {
   const kal = [
     { kw: 47, monat: 11, arbeitstage: 6, gesperrt: false },
     { kw: 48, monat: 12, arbeitstage: 6, gesperrt: true },
-    { kw: 49, monat: 12, arbeitstage: 6, gesperrt: true },
     { kw: 30, monat: 7, arbeitstage: 6, gesperrt: true },
   ];
   assert.deepEqual(nachMonat(kal).map((g) => g.name), ['November']);
-  assert.deepEqual(gesperrteBereiche(kal), [
-    { name: 'Juli', vonKw: 30, bisKw: 30 },
-    { name: 'Dezember', vonKw: 48, bisKw: 49 },
+});
+
+test('gesperrteZeitraeume fasst aufeinanderfolgende KWs zusammen', () => {
+  const k = (kw, gesperrt) => ({ kw, von: `v${kw}`, bis: `b${kw}`, monat: 1, arbeitstage: 5, gesperrt });
+  assert.deepEqual(gesperrteZeitraeume([k(1, false), k(2, false)]), []);
+  assert.deepEqual(gesperrteZeitraeume([k(11, false), k(12, true), k(13, false)]),
+    [{ vonKw: 12, bisKw: 12, von: 'v12', bis: 'b12' }]);
+  assert.deepEqual(gesperrteZeitraeume([k(9, true), k(10, true), k(11, false), k(12, true), k(13, true), k(14, true)]), [
+    { vonKw: 9, bisKw: 10, von: 'v9', bis: 'b10' },
+    { vonKw: 12, bisKw: 14, von: 'v12', bis: 'b14' },
   ]);
+  assert.deepEqual(gesperrteZeitraeume([k(51, false), k(52, true), k(53, true)]),
+    [{ vonKw: 52, bisKw: 53, von: 'v52', bis: 'b53' }]);
 });
 
 test('Regeltext', () => {

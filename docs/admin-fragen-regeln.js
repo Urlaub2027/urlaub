@@ -6,11 +6,12 @@
 import { meldung, knopf, element } from './admin-hilfe.js';
 import { MONATE } from './logik.js';
 import {
-  aktion, merke, setzeWert, schalter, option, feld, kurz, nummer, frageMitId, neuZeichnen,
+  aktion, merke, setzeWert, schalter, option, feld, kurz, nummer, frageMitId, kalenderVon, neuZeichnen,
 } from './admin-fragen.js';
 
 const REGELN = {
-  urlaubswochen: ['pflicht', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage', 'gesperrte_monate'],
+  urlaubswochen: ['pflicht', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage', 'gesperrte_monate',
+    'gesperrte_wochen'],
   einfach: ['pflicht'],
   janein: ['pflicht'],
   skala: ['pflicht'],
@@ -36,6 +37,7 @@ const REGEL_TEXT = {
   max_am_stueck: 'Höchstens Wochen am Stück',
   max_urlaubstage: 'Höchstens Urlaubstage',
   gesperrte_monate: 'Gesperrte Monate',
+  gesperrte_wochen: 'Gesperrte Wochen',
 };
 
 const GANZZAHL = ['min_anzahl', 'max_anzahl', 'max_zeichen', 'min_wochen', 'max_wochen', 'max_am_stueck',
@@ -97,6 +99,32 @@ function regelZeile(f, art) {
       label.append(box, document.createTextNode(` ${name}`));
       raster.append(label);
     });
+    zeile.classList.add('regel-monate');
+    zeile.append(sw, raster);
+    return zeile;
+  }
+
+  if (art === 'gesperrte_wochen') {
+    const gewaehlt = new Set(Array.isArray(r?.wert) ? r.wert.map(Number) : []);
+    const raster = element('div', 'monate-raster wochen-raster');
+    raster.setAttribute('role', 'group');
+    raster.setAttribute('aria-label', REGEL_TEXT[art]);
+    const liste = () => [...raster.querySelectorAll('input:checked')].map((b) => Number(b.value));
+    const sw = schalter(schluessel, r?.aktiv, REGEL_TEXT[art], (an) => setzen(liste(), an));
+    const swBox = sw.querySelector('input');
+    // Jahreswochen (52 oder 53) aus dem Kalender der Umfrage.
+    for (const k of kalenderVon()) {
+      const label = element('label', 'monat-wahl');
+      label.title = `${k.von}–${k.bis}`;
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = String(k.kw);
+      box.checked = gewaehlt.has(k.kw);
+      box.dataset.schluessel = `${schluessel}-${k.kw}`;
+      box.addEventListener('change', () => setzen(liste(), swBox.checked || !r));
+      label.append(box, document.createTextNode(` KW ${k.kw}`));
+      raster.append(label);
+    }
     zeile.classList.add('regel-monate');
     zeile.append(sw, raster);
     return zeile;

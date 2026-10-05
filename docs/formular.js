@@ -4,7 +4,7 @@ import {
   sichtbareFragen, fehlerText, regelHinweis, istPflicht, istLeer,
 } from './formular-logik.js';
 import {
-  zusammenfassung, istGesperrt, nachMonat, gesperrteBereiche, gesperrteGewaehlte,
+  zusammenfassung, istGesperrt, nachMonat, gesperrteZeitraeume, gesperrteGewaehlte,
 } from './logik.js';
 
 function el(tag, klasse, text) {
@@ -211,12 +211,12 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
     }
 
     const teile = [erklaerung, zaehler, monate];
-    const bereiche = gesperrteBereiche(kalender);
+    const bereiche = gesperrteZeitraeume(kalender);
     if (bereiche.length) {
       const box = el('section', 'box box-gesperrt');
       const liste = el('ul', 'liste');
       liste.append(...bereiche.map((b) => el('li', null,
-        b.vonKw === b.bisKw ? `${b.name} (KW ${b.vonKw})` : `${b.name} (KW ${b.vonKw}–${b.bisKw})`)));
+        b.vonKw === b.bisKw ? `KW ${b.vonKw} (${b.von}–${b.bis})` : `KW ${b.vonKw}–${b.bisKw} (${b.von}–${b.bis})`)));
       box.append(el('h3', null, 'Nicht wählbar'), liste);
       if (uw.sperr_hinweis) box.append(el('p', null, uw.sperr_hinweis));
       teile.push(box);

@@ -112,11 +112,16 @@ create table if not exists urlaub.regeln (
   frage_id bigint not null references urlaub.fragen (id) on delete cascade,
   art      text not null check (art in ('pflicht', 'min_anzahl', 'max_anzahl', 'max_zeichen', 'min_zahl', 'max_zahl',
                                         'fruehestens', 'spaetestens', 'min_wochen', 'max_wochen', 'max_am_stueck',
-                                        'max_urlaubstage', 'gesperrte_monate')),
+                                        'max_urlaubstage', 'gesperrte_monate', 'gesperrte_wochen')),
   wert     jsonb not null default 'null',
   aktiv    boolean not null default true,
   unique (frage_id, art)
 );
+-- Bestehende Installationen: Prüfung um 'gesperrte_wochen' erweitern (idempotent).
+alter table urlaub.regeln drop constraint if exists regeln_art_check;
+alter table urlaub.regeln add constraint regeln_art_check check (art in (
+  'pflicht', 'min_anzahl', 'max_anzahl', 'max_zeichen', 'min_zahl', 'max_zahl', 'fruehestens', 'spaetestens',
+  'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage', 'gesperrte_monate', 'gesperrte_wochen'));
 
 -- Sichtbarkeits-Bedingung: frage_id = Zielfrage, quelle_id = frühere Frage.
 -- quelle_id ohne "on delete": eine verwendete Quellfrage ist nicht löschbar.
@@ -263,6 +268,10 @@ as $$
                      from urlaub.regeln r
                      where r.frage_id = f.id and r.art = 'gesperrte_monate' and r.aktiv
                        and jsonb_typeof(r.wert) = 'array'), '{}'::int[]) as gesperrte_monate,
+           coalesce((select array(select jsonb_array_elements_text(r.wert)::int)
+                     from urlaub.regeln r
+                     where r.frage_id = f.id and r.art = 'gesperrte_wochen' and r.aktiv
+                       and jsonb_typeof(r.wert) = 'array'), '{}'::int[]) as gesperrte_wochen,
            make_date(f.jahr, 1, 4) - (extract(isodow from make_date(f.jahr, 1, 4))::int - 1) as montag1,
            extract(week from make_date(f.jahr, 12, 28))::int as anzahl
     from f
@@ -274,7 +283,7 @@ as $$
     select fr.datum, fr.name from urlaub.freie_tage fr where fr.umfrage_id = p_umfrage_id
   ),
   w as (
-    select u.arbeitstage_pro_woche, u.gesperrte_monate, g.kw, u.montag1 + (g.kw - 1) * 7 as montag
+    select u.arbeitstage_pro_woche, u.gesperrte_monate, u.gesperrte_wochen, g.kw, u.montag1 + (g.kw - 1) * 7 as montag
     from u, generate_series(1, u.anzahl) as g (kw)
   )
   select w.kw,
@@ -283,10 +292,10 @@ as $$
          extract(month from w.montag + 3)::int,
          w.arbeitstage_pro_woche - count(distinct fr.datum)::int,
          string_agg(distinct fr.name, ', ' order by fr.name),
-         extract(month from w.montag + 3)::int = any (w.gesperrte_monate)
+         (extract(month from w.montag + 3)::int = any (w.gesperrte_monate) or w.kw = any (w.gesperrte_wochen))
   from w
   left join frei fr on fr.datum between w.montag and w.montag + (w.arbeitstage_pro_woche - 1)
-  group by w.kw, w.montag, w.arbeitstage_pro_woche, w.gesperrte_monate
+  group by w.kw, w.montag, w.arbeitstage_pro_woche, w.gesperrte_monate, w.gesperrte_wochen
   order by w.kw
 $$;
 
@@ -1240,7 +1249,7 @@ set search_path = ''
 as $$
   select case p_typ
     when 'urlaubswochen' then array['pflicht', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage',
-                                    'gesperrte_monate']
+                                    'gesperrte_monate', 'gesperrte_wochen']
     when 'einfach'       then array['pflicht']
     when 'janein'        then array['pflicht']
     when 'skala'         then array['pflicht']
@@ -1320,12 +1329,12 @@ begin
     end;
     return to_jsonb(to_char(v_datum, 'YYYY-MM-DD'));
   end if;
-  if p_art = 'gesperrte_monate' then
+  if p_art in ('gesperrte_monate', 'gesperrte_wochen') then
     if jsonb_typeof(p_wert) is distinct from 'array'
        or exists (select 1 from jsonb_array_elements(p_wert) e
                   where jsonb_typeof(e) <> 'number'
                      or (e #>> '{}')::numeric <> trunc((e #>> '{}')::numeric)
-                     or (e #>> '{}')::numeric not between 1 and 12) then
+                     or (e #>> '{}')::numeric not between 1 and (case p_art when 'gesperrte_wochen' then 53 else 12 end)) then
       raise exception 'UNGUELTIGE_EINSTELLUNG';
     end if;
     return coalesce((select jsonb_agg(m order by m)

@@ -200,6 +200,14 @@ test('Regeln setzen: passend und mit gültigen Werten', async () => {
   await regel(uw, 'gesperrte_monate', [12, 7, 7]);
   assert.deepEqual((await findeFrage(u, uw)).regeln.gesperrte_monate, { wert: [7, 12], aktiv: true });
   await assert.rejects(regel(uw, 'gesperrte_monate', [13]), /UNGUELTIGE_EINSTELLUNG/);
+  await regel(uw, 'gesperrte_wochen', [12, 10, 10]);
+  assert.deepEqual((await findeFrage(u, uw)).regeln.gesperrte_wochen, { wert: [10, 12], aktiv: true });
+  await regel(uw, 'gesperrte_wochen', []);
+  assert.deepEqual((await findeFrage(u, uw)).regeln.gesperrte_wochen, { wert: [], aktiv: true });
+  for (const schlecht of [[54], [0], ['a'], 5]) {
+    await assert.rejects(regel(uw, 'gesperrte_wochen', schlecht), /UNGUELTIGE_EINSTELLUNG/);
+  }
+  await assert.rejects(regel(t, 'gesperrte_wochen', [10]), /REGEL_UNPASSEND/);
   await assert.rejects(regel(uw, 'max_wochen', -1), /UNGUELTIGE_EINSTELLUNG/);
   const d = await frage(u, 'datum');
   await regel(d, 'fruehestens', '2027-01-01');

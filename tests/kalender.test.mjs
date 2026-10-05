@@ -98,6 +98,26 @@ test('Ausgeschaltete Regel „gesperrte Monate“ sperrt nichts', async () => {
   assert.equal(k.filter((w) => w.gesperrt).length, 0);
 });
 
+test('Regel „gesperrte Wochen“ sperrt einzelne KWs zusätzlich zu den Monaten', async () => {
+  const id = await umfrageAnlegen(db, chef);
+  const fid = await urlaubsfrageId(db, id);
+  const setze = (aktiv) => db.query(
+    `insert into urlaub.regeln (frage_id, art, wert, aktiv) values ($1, 'gesperrte_wochen', '[10,12]', $2)
+     on conflict (frage_id, art) do update set wert = excluded.wert, aktiv = excluded.aktiv`, [fid, aktiv]);
+  assert.equal((await kalender(id))[9].gesperrt, false); // Regel fehlt = aus
+  await setze(true);
+  const k = await kalender(id);
+  assert.equal(k[9].gesperrt, true);
+  assert.equal(k[10].gesperrt, false);
+  assert.equal(k[11].gesperrt, true);
+  assert.equal(k[51].gesperrt, true); // Dezember bleibt gesperrt
+  await setze(false);
+  const k2 = await kalender(id);
+  assert.equal(k2[9].gesperrt, false);
+  assert.equal(k2[11].gesperrt, false);
+  assert.equal(k2[51].gesperrt, true);
+});
+
 test('Umfrage ohne Urlaubswochen-Frage hat keinen Kalender', async () => {
   const r = await db.query("insert into urlaub.umfragen (organisator_id, titel, frist) values ($1, 'Ohne', now()) returning id", [chef]);
   assert.equal((await kalender(r.rows[0].id)).length, 0);

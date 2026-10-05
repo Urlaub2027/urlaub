@@ -99,6 +99,7 @@ export function pfeil(zeichen, text, schluessel, gesperrt, aktionBeiKlick) {
 
 // Nummer einer Frage in der Liste (1, 2, …).
 export const nummer = (id) => (daten?.fragen || []).findIndex((f) => f.id === id) + 1;
+export const kalenderVon = () => daten?.kalender || [];
 export const frageMitId = (id) => (daten?.fragen || []).find((f) => f.id === id);
 
 // Ruft eine Editor-Funktion auf und lädt danach neu. Bei einem Fehler wird mit den

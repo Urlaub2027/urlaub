@@ -35,10 +35,10 @@ test('Excel-Datei: Antworten, Wochen, Matrix', { skip: python.status !== 0 && 'p
   const r = spawnSync('python', ['-c', `
 import json, sys, openpyxl
 wb = openpyxl.load_workbook(sys.argv[1])
-print(json.dumps({ws.title: [[c for c in row] for row in ws.iter_rows(values_only=True)] for ws in wb}, ensure_ascii=False, default=str))
+print(json.dumps({'daten': {ws.title: [[c for c in row] for row in ws.iter_rows(values_only=True)] for ws in wb}, 'fix': {ws.title: ws.freeze_panes for ws in wb}}, ensure_ascii=False, default=str))
 `, datei], { encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
   assert.equal(r.status, 0, r.stderr);
-  const wb = JSON.parse(r.stdout);
+  const { daten: wb, fix } = JSON.parse(r.stdout);
   assert.deepEqual(Object.keys(wb), ['Antworten', 'Wochen', 'Matrix']);
   assert.deepEqual(wb.Antworten[0], ['Name', 'Abgegeben', 'Letzte Änderung', 'Urlaub', 'Schicht', 'Alt (aus)', 'Hinweis']);
   assert.deepEqual(wb.Antworten[1].slice(0, 6), ['Anna Ä. <&>', 'ja', '01.10.2026, 16:00 Uhr', 'KW 1, KW 30', 'Früh', null]);
@@ -48,6 +48,17 @@ print(json.dumps({ws.title: [[c for c in row] for row in ws.iter_rows(values_onl
   assert.deepEqual(wb.Wochen[1], [1, '01.01.–07.01.', 5, 'Heilige Drei Könige', 1, 'Anna Ä. <&>']);
   assert.equal(wb.Matrix[0].length, 48);
   assert.equal(wb.Matrix[1][1], 'x');
+  assert.equal(fix.Antworten, 'B2');
+  assert.equal(fix.Matrix, 'B2');
+  assert.equal(fix.Wochen, 'A2'); // nur Kopfzeile fixiert
+  const kw30 = wb.Matrix[0].indexOf('KW 30');
+  assert.equal(wb.Matrix[1][kw30], 'x'); // Anna
+  assert.equal(wb.Matrix[2][kw30], null); // Ben
+  assert.equal(wb.Matrix[1][wb.Matrix[0].indexOf('KW 2')], null);
+  const summe = wb.Matrix[wb.Matrix.length - 1];
+  assert.equal(summe[0], 'Anzahl');
+  assert.equal(summe[wb.Matrix[0].indexOf('KW 1')], 1);
+  assert.equal(summe[kw30], 1);
 });
 
 test('Excel-Datei ohne Urlaubswochen hat nur das Blatt „Antworten“', { skip: python.status !== 0 && 'python/openpyxl nicht verfügbar' }, () => {

@@ -141,6 +141,21 @@ test('Ungültige Formen werden abgelehnt', async () => {
   }
 });
 
+test('Gesperrte Woche per Regel: Abgabe abgelehnt, bei ausgeschalteter Regel gültig', async () => {
+  const fid = bau.ids.urlaub;
+  const basis = { schicht: 'frueh' };
+  await db.query("insert into urlaub.regeln (frage_id, art, wert) values ($1, 'gesperrte_wochen', '[10]')", [fid]);
+  try {
+    const f = await fehlerVon(bau, absendenKeys(code2, { ...basis, urlaub: [10] }));
+    assert.equal(f.fehler?.urlaub, 'UNGUELTIGE_WOCHE');
+    await db.query("update urlaub.regeln set aktiv = false where frage_id = $1 and art = 'gesperrte_wochen'", [fid]);
+    await absendenKeys(code2, { ...basis, urlaub: [10] });
+    assert.deepEqual((await gespeichert(code2)).urlaub, [10]);
+  } finally {
+    await db.query("delete from urlaub.regeln where frage_id = $1 and art = 'gesperrte_wochen'", [fid]);
+  }
+});
+
 test('Wochen als 5.0 geschrieben zählen als ganze Wochen; 5 und 5.0 sind doppelt', async () => {
   const roh = (json) => browser(db, 'select public.umfrage_absenden($1, $2::jsonb) as r', [code2, json]);
   const s = String(bau.ids.schicht);

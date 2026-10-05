@@ -81,15 +81,21 @@ export function gesperrteGewaehlte(kalender, wochen) {
   });
 }
 
-export function gesperrteBereiche(kalender) {
-  const monate = new Map();
-  for (const k of kalender.filter((x) => x.gesperrt)) {
-    const b = monate.get(k.monat);
-    if (b) { b.vonKw = Math.min(b.vonKw, k.kw); b.bisKw = Math.max(b.bisKw, k.kw); }
-    else monate.set(k.monat, { name: MONATE[k.monat - 1], vonKw: k.kw, bisKw: k.kw, monat: k.monat });
+// Aufeinanderfolgende gesperrte KWs als Zeiträume (von = Beginn der ersten, bis = Ende der letzten KW).
+export function gesperrteZeitraeume(kalender) {
+  const zeitraeume = [];
+  let letzter = null;
+  for (const k of [...kalender].sort((a, b) => a.kw - b.kw)) {
+    if (!k.gesperrt) { letzter = null; continue; }
+    if (letzter && k.kw === letzter.bisKw + 1) {
+      letzter.bisKw = k.kw;
+      letzter.bis = k.bis;
+    } else {
+      letzter = { vonKw: k.kw, bisKw: k.kw, von: k.von, bis: k.bis };
+      zeitraeume.push(letzter);
+    }
   }
-  return [...monate.values()].sort((a, b) => a.vonKw - b.vonKw)
-    .map(({ name, vonKw, bisKw }) => ({ name, vonKw, bisKw }));
+  return zeitraeume;
 }
 
 export function regelText(d) {
