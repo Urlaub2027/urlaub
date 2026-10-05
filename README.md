@@ -5,7 +5,9 @@ wünschen. Organisatoren legen eigene Umfragen an und stellen das Formular im
 Fragen-Baukasten selbst zusammen (Fragetypen wie Urlaubswochen, Auswahl, Ja/Nein,
 Skala, Text, Zahl, Datum; Prüfregeln, Bedingungen, Vorschau, Umfrage kopieren). Die
 Urlaubswochen-Frage bringt Jahr, Bundesland, Wochengrenzen und gesperrte Monate/Wochen
-mit. Weitere Organisatoren werden per Einladungslink eingeladen. Einrichtung und Bedienung: [ANLEITUNG.md](ANLEITUNG.md).
+mit. Neue Umfragen starten aus Vorlagen (Urlaubswünsche, Leer, Schicht- und
+Verfügbarkeitswünsche, Weihnachtsfeier); eine Umfrage lässt sich als Datei sichern und
+wieder einspielen. Weitere Organisatoren werden per Einladungslink eingeladen. Einrichtung und Bedienung: [ANLEITUNG.md](ANLEITUNG.md).
 
 ## Aufbau
 
@@ -13,6 +15,7 @@ mit. Weitere Organisatoren werden per Einladungslink eingeladen. Einrichtung und
 |---|---|
 | `docs/` | Statische Seite (GitHub Pages): `index.html` für Mitarbeiter, `admin.html` für die Verwaltung (Organisatoren) |
 | `supabase/schema.sql` | Komplette Datenbank: Tabellen, Prüffunktionen, Admin-Funktionen. Einmal im SQL-Editor ausführen; erneutes Ausführen ist unschädlich |
+| `.github/workflows/wachhalten.yml` | Täglicher Aufruf von `public.lebenszeichen`, damit Supabase das Projekt nicht pausiert |
 | `tests/` | Tests gegen eine lokale Postgres-Instanz (PGlite) mit nachgebildeten Supabase-Rollen |
 
 Sicherheitsprinzip: Tabellen liegen im Schema `urlaub`, auf das die Rollen `anon`
@@ -23,6 +26,7 @@ Funktionen in `public` auf:
   (Formular und eigene Antworten) und `umfrage_absenden` (prüft und speichert eine
   Abgabe serverseitig);
 - ohne Anmeldung, geprüft über den Einladungscode: `einladung_pruefen`;
+- ohne Anmeldung, ohne Prüfung: `lebenszeichen` (Wach-Automatik);
 - angemeldet: `org_*` (nur eigene Umfragen) und `haupt_*` (nur Hauptadmin).
 
 Registrierungen ohne gültige Einladung lehnt ein Trigger auf `auth.users` ab.

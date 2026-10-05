@@ -17,6 +17,20 @@ Programmierkenntnisse. Menüs bei Supabase und GitHub können leicht anders hei�
 
 ---
 
+## Update Oktober 2026 – Vorlagen, Sicherung, Wach-Automatik
+
+Neu: Umfragen aus Vorlagen anlegen, Mitarbeiter-Liste einfügen, Erinnern per WhatsApp,
+Sicherung herunterladen und einspielen, tägliche Wach-Automatik. Reihenfolge:
+
+1. Supabase → **SQL Editor** → „New query“ → kompletten Inhalt von `supabase/schema.sql`
+   einfügen → **Run**. Erwartet: „Success“.
+2. **Erst danach** wird die neue Seite veröffentlicht. Die alte Seite läuft mit dem neuen
+   SQL weiter, die neue Seite braucht es.
+3. GitHub → Repo → **Actions**: Fragt GitHub, ob Workflows aktiviert werden sollen,
+   bestätigen. Den Workflow „Datenbank wachhalten“ öffnen → **Run workflow** → einmal von
+   Hand starten. Nach wenigen Sekunden erscheint ein grüner Haken. Danach zeigt die
+   Verwaltung unter **Meine Umfragen** die Zeile „Wach-Automatik: zuletzt …“.
+
 ## Teil A – Umstellung von Stand 2 auf Stand 3 (einmalig)
 
 Stand 3 bringt den Fragen-Baukasten. Eine Vorabprüfung ist nicht nötig.
@@ -64,9 +78,21 @@ gespeicherte Abgaben bleiben gültig.
 
 ### Umfrage anlegen
 
-Verwaltung → **Meine Umfragen** → Titel, Jahr, Bundesland → **Umfrage anlegen**.
-Eine neue Umfrage hat zunächst eine Frage „Urlaubswochen“. Jede Umfrage hat vier Reiter:
-**Fragen**, **Mitarbeiter**, **Antworten**, **Einstellungen**.
+Verwaltung → **Meine Umfragen** → **Vorlage** wählen → Titel eintragen → **Umfrage anlegen**.
+
+- **Vorlagen:** Urlaubswünsche, Leer, Schicht- und Verfügbarkeitswünsche, Weihnachtsfeier.
+- **Jahr** und **Bundesland** erscheinen nur bei Urlaubswünsche. Eine neue Urlaubs-Umfrage
+  hat zunächst eine Frage „Urlaubswochen“.
+- Lässt du den Titel leer, wird ein Vorschlag eingesetzt (z. B. „Weihnachtsfeier 2026“).
+- Bei allen anderen Vorlagen ist die Frist heute + 14 Tage, 23:59 Uhr. Du kannst sie unter
+  **Einstellungen** ändern.
+- **Weihnachtsfeier:** Die Folgefragen erscheinen erst nach „Ja“. Die Terminvorschläge
+  „Termin 1–3“ musst du im Reiter **Fragen** durch die echten Termine ersetzen. Die Frage
+  zum Essen (Mit Fleisch/Vegetarisch/Vegan) kannst du ausschalten. Eine Frage nach
+  Allergien gibt es bewusst nicht: Das wären Gesundheitsdaten, und die Antworten sind
+  nicht anonym.
+
+Jede Umfrage hat vier Reiter: **Fragen**, **Mitarbeiter**, **Antworten**, **Einstellungen**.
 
 ### Fragen bearbeiten
 
@@ -151,8 +177,46 @@ Fragen, Regeln, Bedingungen und freien Tagen – ohne Mitarbeiter und Antworten)
 
 ### Mitarbeiter anlegen und Links verschicken
 
-Reiter **Mitarbeiter** → Namen eintragen → **Anlegen** → beim Namen **WhatsApp**
-(öffnet WhatsApp mit fertiger Nachricht) oder **Link kopieren**.
+Reiter **Mitarbeiter** → ins Feld „Neue Mitarbeiter (ein Name pro Zeile)“ die Namen
+untereinander einfügen (geht auch aus Excel kopiert) → **Anlegen**. Es erscheint z. B.
+„3 Mitarbeiter angelegt.“ Höchstens 200 auf einmal. Es wird ganz oder gar nicht angelegt:
+Ist ein Name doppelt, nennt die Meldung ihn, und es wird nichts angelegt. Danach beim Namen
+**WhatsApp** (öffnet WhatsApp mit fertiger Nachricht) oder **Link kopieren**.
+
+Solange die Frist läuft, gibt es zwei Hilfen für Nachzügler:
+
+- **Erinnern** (bei jeder Person ohne Abgabe): öffnet WhatsApp mit einem Erinnerungstext
+  samt Frist und persönlichem Link.
+- **Liste „noch offen“ kopieren (n)** (über der Liste): kopiert nur die Namen derer ohne
+  Abgabe, z. B. für einen Gruppen-Chat.
+
+### Sicherung
+
+- **Herunterladen:** Reiter **Einstellungen** → Kasten **Sicherung** → **Sicherung
+  herunterladen**. Die Datei heißt z. B. „Weihnachtsfeier-2026_Sicherung-2026-10-05.json“.
+- **Inhalt:** Fragen, Regeln, Mitarbeiter, Antworten und die persönlichen Links. Bewahre die
+  Datei deshalb sicher auf. Wer sie hat, kann in die Umfrage hineinschauen.
+- **Einspielen:** **Meine Umfragen** → Kasten **Sicherung einspielen** → Feld
+  „Sicherungsdatei (.json)“ → **Einspielen** (höchstens 5 MB, vorher kommt eine Rückfrage).
+  Es entsteht eine neue Umfrage.
+- **Alte Links:** Die Links der Mitarbeiter gehen wieder, wenn die ursprüngliche Umfrage
+  gelöscht ist und der Link nicht mit **Neuer Link** ersetzt wurde. Sonst entstehen neue
+  Links; die Meldung nennt, wie viele. Diese musst du neu verschicken.
+- **Empfehlung:** Nach Ablauf der Frist einmal sichern.
+
+### Wach-Automatik
+
+Supabase pausiert kostenlose Projekte nach etwa einer Woche ohne Aufrufe. Damit das nicht
+passiert, meldet sich der GitHub-Workflow „Datenbank wachhalten“
+(`.github/workflows/wachhalten.yml`) täglich um 05:17 Uhr (Sommerzeit) bzw. 04:17 Uhr
+(Winterzeit) bei der Datenbank. Du kannst ihn auch von Hand starten (GitHub → **Actions**
+→ **Run workflow**).
+
+- **Status:** Unter **Meine Umfragen** steht „Wach-Automatik: zuletzt …“. Hat sie sich seit
+  3 Tagen oder länger nicht gemeldet, steht dort eine rote Warnung mit ⚠.
+- Schlägt der Lauf fehl, schickt GitHub eine E-Mail.
+- GitHub kann Zeitpläne in öffentlichen Repos abschalten, wenn 60 Tage lang nichts am Repo
+  geändert wurde. Dann unter **Actions** den Workflow öffnen und **Enable workflow** klicken.
 
 ### Weitere Organisatoren einladen
 
@@ -185,6 +249,8 @@ und Passwort selbst.
 | Seite meldet „Keine Verbindung“ für alle | Supabase pausiert kostenlose Projekte nach ca. 1 Woche ohne Aufrufe. Bei Supabase anmelden → Projekt → **Restore project**. Daten bleiben erhalten. |
 | Eigenes Passwort ändern | Verwaltung → **Konto & Einladen** → Passwort ändern. |
 | Organisator hat Passwort vergessen | Hauptadmin im Supabase SQL Editor: `update auth.users set encrypted_password = extensions.crypt('NEUES-PASSWORT', extensions.gen_salt('bf')) where email = '<benutzername>@example.com';` – Fenster danach **nicht** speichern („Discard“). |
+| „⚠ Die Wach-Automatik hat sich noch nicht gemeldet …“ oder „… seit N Tagen nicht gemeldet …“ | GitHub → **Actions** → „Datenbank wachhalten“ öffnen. Steht dort ein Hinweis, **Enable workflow** klicken, dann **Run workflow**. Ist die Datenbank schon pausiert: Supabase → **Restore project**. |
+| Einspielen meldet „Die Datei ist keine gültige Sicherung oder wurde verändert. Es wurde nichts angelegt.“ | Die Datei unverändert lassen (nicht in Excel oder einem Editor öffnen und speichern). Notfalls die Sicherung neu herunterladen. |
 | Einladung abgelaufen | Neuen Einladungslink erzeugen. |
 | Organisator soll keinen Zugang mehr haben | Hauptadmin → **Organisatoren** → **Sperren**. |
 | Neue Organisator-Registrierung schlägt fehl, obwohl die Einladung gerade erzeugt wurde | Benutzername schon vergeben oder Einladung inzwischen benutzt – neuen Einladungslink erzeugen und einen anderen Benutzernamen wählen. |
@@ -201,4 +267,6 @@ und Passwort selbst.
 - Registrieren kann sich nur, wer einen gültigen Einladungslink hat.
 - Alle Umfragen liegen im Supabase-Projekt des Betreibers. Wer die App anderen
   Abteilungen anbietet, sollte klären, dass das datenschutzrechtlich in Ordnung ist.
+- Eine Sicherungsdatei enthält Namen, Antworten und die persönlichen Links. Sie liegt nur
+  dort, wo der Organisator sie speichert.
 - Wie bei jedem Webdienst protokollieren GitHub und Supabase technisch IP-Adressen.
