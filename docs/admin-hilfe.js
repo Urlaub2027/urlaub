@@ -15,7 +15,9 @@ const FEHLER = {
   UMFRAGE_NICHT_GEFUNDEN: 'Diese Umfrage gibt es nicht (mehr).',
   MITARBEITER_NICHT_GEFUNDEN: 'Diesen Mitarbeiter gibt es nicht (mehr).',
   NAME_LEER: 'Bitte einen Namen eingeben.',
-  NAME_DOPPELT: 'Diesen Namen gibt es in dieser Umfrage schon. Bitte unterscheide ihn, z. B. „Anna K.“ und „Anna M.“.',
+  NAME_DOPPELT: 'Diesen Namen gibt es schon (in der Umfrage oder doppelt in deiner Liste). Bitte unterscheide ihn, z. B. „Anna K.“ und „Anna M.“.',
+  ZU_VIELE_NAMEN: 'Höchstens 200 Namen auf einmal.',
+  SICHERUNG_UNGUELTIG: 'Die Datei ist keine gültige Sicherung oder wurde verändert. Es wurde nichts angelegt.',
   TITEL_LEER: 'Bitte einen Titel eingeben.',
   FRIST_LEER: 'Bitte eine Frist mit Datum und Uhrzeit eingeben.',
   GRUNDDATEN_GESPERRT: 'Jahr, Bundesland und Arbeitstage (bzw. „von“ und „bis“ einer Skala) lassen sich nicht mehr ändern, weil schon Antworten vorliegen.',
@@ -65,8 +67,8 @@ export function element(tag, klasse, text) {
   return e;
 }
 
-export function whatsappLink(text) {
-  const a = element('a', 'knopf-link', 'WhatsApp');
+export function whatsappLink(text, beschriftung = 'WhatsApp') {
+  const a = element('a', 'knopf-link', beschriftung);
   a.href = `https://wa.me/?text=${encodeURIComponent(text)}`;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
@@ -105,4 +107,14 @@ export function fuelleLaender(select, gewaehlt) {
 export function datumDeutsch(iso) {
   const [j, m, t] = String(iso).slice(0, 10).split('-');
   return `${t}.${m}.${j}`;
+}
+
+export function herunterladen(blob, dateiname) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = dateiname;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }

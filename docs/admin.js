@@ -7,6 +7,7 @@ import * as sitzung from './sitzung.js';
 import { rpc, registrieren, passwortAendern } from './api.js';
 import { zeitpunkt } from './logik.js';
 import { initUmfrage, zeigeUmfrage } from './admin-umfrage.js';
+import { VORLAGEN, vorlagenTitel, wachStatus } from './verwaltung-logik.js';
 
 const ANSICHTEN = ['login', 'registrieren', 'liste', 'umfrage', 'konto', 'organisatoren'];
 const BENUTZERNAME = /^(?=.{2,30}$)[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -155,6 +156,8 @@ async function zeigeListe() {
     fehlerAnzeigen(fehler);
     return;
   }
+  // Lebenszeichen der Wach-Automatik; ein Fehler hier blendet nur die Zeile aus.
+  aufruf('org_lebenszeichen').then(zeigeWachStatus, () => { $('wach-status').hidden = true; });
   const liste = $('umfragen');
   liste.replaceChildren();
   if (!umfragen.length) liste.append(element('li', 'klein', 'Noch keine Umfrage. Lege oben die erste an.'));
@@ -175,6 +178,52 @@ async function zeigeListe() {
   }
 }
 
+function zeigeWachStatus(zeit) {
+  const s = wachStatus(zeit);
+  const p = $('wach-status');
+  p.className = s.warnung ? 'karte-warnung' : 'klein';
+  p.textContent = s.text;
+  p.hidden = false;
+}
+
+function vorlageGeaendert() {
+  const vorlage = $('neu-vorlage').value;
+  $('neu-urlaub-felder').hidden = !VORLAGEN.find((v) => v.name === vorlage)?.mitJahr;
+  $('neu-titel').placeholder = vorlagenTitel(vorlage, Number($('neu-jahr').value));
+}
+
+const MAX_SICHERUNG = 5 * 1024 * 1024;
+
+async function sicherungEinspielen() {
+  meldung('');
+  const datei = $('sicherung-datei').files[0];
+  if (!datei) return meldung('Bitte zuerst eine Sicherungsdatei auswählen.');
+  if (datei.size > MAX_SICHERUNG) return meldung('Die Datei ist zu groß für eine Sicherung (höchstens 5 MB).');
+  let daten;
+  try {
+    daten = JSON.parse(await datei.text());
+  } catch {
+    return meldung(fehlerText('SICHERUNG_UNGUELTIG'));
+  }
+  if (!window.confirm('Aus dieser Sicherung eine neue Umfrage anlegen?')) return;
+  const knopfEinspielen = $('sicherung-einspielen');
+  knopfEinspielen.disabled = true;
+  let r;
+  try {
+    r = await aufruf('org_sicherung_einspielen', { p_daten: daten });
+  } catch (fehler) {
+    fehlerAnzeigen(fehler);
+    return;
+  } finally {
+    knopfEinspielen.disabled = false;
+  }
+  $('sicherung-datei').value = '';
+  await oeffneUmfrage(r.id);
+  meldung(r.neue_links
+    ? `Sicherung eingespielt. ${r.neue_links} Mitarbeiter haben einen neuen Link bekommen, weil ihr alter Link noch zu einer bestehenden Umfrage gehört – bitte neu verschicken.`
+    : 'Sicherung eingespielt.');
+}
+
 async function oeffneUmfrage(id) {
   meldung('');
   zeigeAnsicht('umfrage');
@@ -184,12 +233,15 @@ async function oeffneUmfrage(id) {
 async function umfrageAnlegen(ereignis) {
   ereignis.preventDefault();
   meldung('');
+  const vorlage = $('neu-vorlage').value;
+  const mitJahr = Boolean(VORLAGEN.find((v) => v.name === vorlage)?.mitJahr);
   const jahr = Number($('neu-jahr').value);
   try {
     const id = await aufruf('org_umfrage_anlegen', {
-      p_titel: $('neu-titel').value.trim() || `Urlaubswünsche ${jahr}`,
-      p_jahr: jahr,
-      p_bundesland: $('neu-land').value,
+      p_titel: $('neu-titel').value.trim() || vorlagenTitel(vorlage, jahr),
+      p_vorlage: vorlage,
+      p_jahr: mitJahr ? jahr : null,
+      p_bundesland: mitJahr ? $('neu-land').value : null,
     });
     $('neu-titel').value = '';
     await oeffneUmfrage(id);
@@ -283,15 +335,20 @@ function start() {
   const jetzt = new Date().getFullYear();
   fuelleJahre($('neu-jahr'), jetzt, jetzt + 3, jetzt + 1);
   fuelleLaender($('neu-land'), 'BY');
-  $('neu-jahr').addEventListener('change', () => {
-    $('neu-titel').placeholder = `Urlaubswünsche ${$('neu-jahr').value}`;
-  });
-  $('neu-titel').placeholder = `Urlaubswünsche ${jetzt + 1}`;
+  $('neu-vorlage').replaceChildren(...VORLAGEN.map((v) => {
+    const o = element('option', null, v.titel);
+    o.value = v.name;
+    return o;
+  }));
+  $('neu-vorlage').addEventListener('change', vorlageGeaendert);
+  $('neu-jahr').addEventListener('change', vorlageGeaendert);
+  vorlageGeaendert();
 
   $('login-form').addEventListener('submit', login);
   $('reg-form').addEventListener('submit', registrierenAbsenden);
   $('neu-umfrage-form').addEventListener('submit', umfrageAnlegen);
   $('einladen').addEventListener('click', einladen);
+  $('sicherung-einspielen').addEventListener('click', sicherungEinspielen);
   $('passwort-form').addEventListener('submit', passwortAendernAbsenden);
   $('abmelden').addEventListener('click', () => abmelden(''));
   for (const b of document.querySelectorAll('[data-ziel]')) {

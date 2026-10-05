@@ -1,7 +1,8 @@
 // Verwaltung: Detailansicht einer Umfrage (Fragen, Mitarbeiter, Antworten, Einstellungen, Excel).
 import {
-  $, meldung, knopf, element, whatsappLink, kopieren, datumDeutsch,
+  $, meldung, fehlerText, knopf, element, whatsappLink, kopieren, datumDeutsch, herunterladen,
 } from './admin-hilfe.js';
+import { namenAusText, erinnerungsText, offenListeText } from './verwaltung-logik.js';
 import { zeitpunkt } from './logik.js';
 import { personenZeilen, zusammenfassung, excelBlaetter } from './auswertung.js';
 import { erzeugeXlsx } from './xlsx.js';
@@ -19,6 +20,7 @@ export function initUmfrage(kontext) {
   $('einstellungen-form').addEventListener('submit', einstellungenSpeichern);
   $('frei-form').addEventListener('submit', freienTagHinzufuegen);
   $('excel').addEventListener('click', excelHerunterladen);
+  $('sicherung-herunterladen').addEventListener('click', sicherungHerunterladen);
   $('umfrage-kopieren').addEventListener('click', umfrageKopieren);
   $('umfrage-loeschen').addEventListener('click', umfrageLoeschen);
   for (const b of document.querySelectorAll('[data-reiter]')) {
@@ -33,6 +35,7 @@ export async function zeigeUmfrage(id) {
   formularFuer = null;
   for (const k of ['u-titel', 'kennzahl', 'frist-anzeige']) $(k).textContent = '';
   $('personen').replaceChildren();
+  $('offen-aktionen').replaceChildren();
   $('antworten-liste').replaceChildren();
   zeigeFragen(null);
   zeigeReiter('fragen');
@@ -108,6 +111,15 @@ function zeichne() {
 }
 
 function zeichnePersonen(personen) {
+  const e = daten.einstellungen;
+  const offen = personen.filter((p) => !p.abgegeben);
+  const offenAktionen = $('offen-aktionen');
+  offenAktionen.replaceChildren();
+  if (e.offen && offen.length) {
+    const listeKnopf = knopf(`Liste „noch offen“ kopieren (${offen.length})`, 'zweitrangig klein-knopf',
+      () => kopieren(offenListeText(offen.map((p) => p.name), e.titel, e.frist), listeKnopf));
+    offenAktionen.append(listeKnopf);
+  }
   const liste = $('personen');
   liste.replaceChildren();
   if (!personen.length) liste.append(element('li', 'klein', 'Noch keine Mitarbeiter angelegt.'));
@@ -121,8 +133,11 @@ function zeichnePersonen(personen) {
     const kopierKnopf = knopf('Link kopieren', 'zweitrangig klein-knopf', () => kopieren(p.link, kopierKnopf));
     aktionen.append(
       kopierKnopf,
-      whatsappLink(`Hallo ${p.name}, hier ist dein persönlicher Link für „${daten.einstellungen.titel}“. `
+      whatsappLink(`Hallo ${p.name}, hier ist dein persönlicher Link für „${e.titel}“. `
         + `Bitte nicht weitergeben – über diesen Link kann man deine Wünsche ändern:\n${p.link}`),
+    );
+    if (!p.abgegeben && e.offen) aktionen.append(whatsappLink(erinnerungsText(p.name, e.titel, e.frist, p.link), 'Erinnern'));
+    aktionen.append(
       knopf('Neuer Link', 'zweitrangig klein-knopf', () => {
         if (!window.confirm(`Neuen Link für ${p.name} erzeugen?\n\nDer bisherige Link funktioniert dann nicht mehr. `
           + 'Die bisherige Abgabe bleibt erhalten. Den neuen Link musst du erneut verschicken.')) return;
@@ -250,8 +265,23 @@ function zeichneFreieTage() {
 
 async function mitarbeiterAnlegen(ereignis) {
   ereignis.preventDefault();
-  const feld = $('neu-name');
-  if (await aktion('org_mitarbeiter_anlegen', { p_umfrage_id: umfrageId, p_name: feld.value })) feld.value = '';
+  const feld = $('neu-namen');
+  const namen = namenAusText(feld.value);
+  meldung('');
+  if (!namen.length) {
+    meldung(fehlerText('NAME_LEER'));
+    feld.focus();
+    return;
+  }
+  try {
+    const anzahl = await ctx.aufruf('org_mitarbeiter_anlegen_liste', { p_umfrage_id: umfrageId, p_namen: namen });
+    feld.value = '';
+    await laden();
+    meldung(anzahl === 1 ? '1 Mitarbeiter angelegt.' : `${anzahl} Mitarbeiter angelegt.`);
+  } catch (fehler) {
+    if (fehler.message === 'NAME_DOPPELT' && fehler.details) meldung(`„${fehler.details}“: ${fehlerText('NAME_DOPPELT')}`);
+    else ctx.fehlerAnzeigen(fehler);
+  }
   feld.focus();
 }
 
@@ -311,17 +341,28 @@ async function umfrageKopieren() {
   if (Number(umfrageId) === Number(neu) && datenPasst()) meldung('Kopie angelegt. Du siehst jetzt die Kopie.');
 }
 
-function excelHerunterladen() {
-  if (!datenPasst()) return;
-  const blob = new Blob([erzeugeXlsx(excelBlaetter(daten))],
-    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+// Dateiname aus Titel und heutigem Datum (deutsche Zeit).
+function dateiBasis() {
   const heute = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
   const name = daten.einstellungen.titel.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'Umfrage';
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `${name}_Stand-${heute}.xlsx`;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  return { name, heute };
+}
+
+function excelHerunterladen() {
+  if (!datenPasst()) return;
+  const { name, heute } = dateiBasis();
+  herunterladen(new Blob([erzeugeXlsx(excelBlaetter(daten))],
+    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${name}_Stand-${heute}.xlsx`);
+}
+
+async function sicherungHerunterladen() {
+  if (!datenPasst()) return;
+  meldung('');
+  const { name, heute } = dateiBasis();
+  try {
+    const s = await ctx.aufruf('org_sicherung', { p_umfrage_id: umfrageId });
+    herunterladen(new Blob([JSON.stringify(s, null, 2)], { type: 'application/json' }), `${name}_Sicherung-${heute}.json`);
+  } catch (fehler) {
+    ctx.fehlerAnzeigen(fehler);
+  }
 }

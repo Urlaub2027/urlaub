@@ -64,21 +64,35 @@
     </section>
 
     <section id="ansicht-liste" hidden>
+      <p id="wach-status" hidden></p>
       <form id="neu-umfrage-form" class="box formular-box" novalidate>
         <h2>Neue Umfrage</h2>
+        <label class="feld">Vorlage
+          <select id="neu-vorlage"></select>
+        </label>
         <label class="feld">Titel
           <input id="neu-titel" type="text" autocomplete="off">
         </label>
-        <label class="feld">Jahr
-          <select id="neu-jahr"></select>
-        </label>
-        <label class="feld">Bundesland (für die Feiertage)
-          <select id="neu-land"></select>
-        </label>
+        <div id="neu-urlaub-felder" class="felder-gruppe">
+          <label class="feld">Jahr
+            <select id="neu-jahr"></select>
+          </label>
+          <label class="feld">Bundesland (für die Feiertage)
+            <select id="neu-land"></select>
+          </label>
+        </div>
         <button type="submit">Umfrage anlegen</button>
       </form>
       <h2>Meine Umfragen</h2>
       <ul id="umfragen" class="karten"></ul>
+      <div class="box formular-box">
+        <h2>Sicherung einspielen</h2>
+        <p class="klein">Legt aus einer Sicherungsdatei eine neue Umfrage an – mit Fragen, Mitarbeitern und Antworten. Die bisherigen Mitarbeiter-Links funktionieren wieder, wenn die ursprüngliche Umfrage gelöscht ist; sonst bekommen die Mitarbeiter neue Links.</p>
+        <label class="feld">Sicherungsdatei (.json)
+          <input id="sicherung-datei" type="file" accept=".json,application/json">
+        </label>
+        <button type="button" id="sicherung-einspielen">Einspielen</button>
+      </div>
     </section>
 
     <section id="ansicht-umfrage" hidden>
@@ -117,13 +131,14 @@
       </section>
 
       <section id="reiter-personen" hidden>
-        <form id="neu-form" class="box neu-form" novalidate>
-          <label class="feld">Neuen Mitarbeiter anlegen
-            <input id="neu-name" type="text" placeholder="Vor- und Nachname" autocomplete="off" required>
+        <form id="neu-form" class="box formular-box" novalidate>
+          <label class="feld">Neue Mitarbeiter (ein Name pro Zeile)
+            <textarea id="neu-namen" rows="4" placeholder="Anna Huber&#10;Ben Maier" autocomplete="off"></textarea>
           </label>
           <button type="submit">Anlegen</button>
         </form>
-        <p class="klein">Jeder Link ist persönlich. Über „WhatsApp“ öffnet sich WhatsApp mit einer fertigen Nachricht, du wählst dort nur noch den Empfänger.</p>
+        <p class="klein">Jeder Link ist persönlich. „WhatsApp“ öffnet WhatsApp mit dem Link, „Erinnern“ mit einer Erinnerung samt Frist – du wählst dort nur noch den Empfänger.</p>
+        <div id="offen-aktionen" class="karte-aktionen"></div>
         <ul id="personen" class="karten"></ul>
       </section>
 
@@ -157,6 +172,12 @@
             </label>
             <button type="submit">Hinzufügen</button>
           </form>
+        </div>
+
+        <div class="box formular-box">
+          <h2>Sicherung</h2>
+          <p class="klein">Speichert die ganze Umfrage – Fragen, Mitarbeiter mit ihren persönlichen Links und alle Antworten – als Datei. Einspielen unter „Meine Umfragen“. Die Datei enthält die persönlichen Links: sicher aufbewahren und nicht weitergeben.</p>
+          <button type="button" id="sicherung-herunterladen" class="zweitrangig">Sicherung herunterladen</button>
         </div>
 
         <div class="box formular-box">

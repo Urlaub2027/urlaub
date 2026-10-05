@@ -472,3 +472,8 @@ button.editor-knopf { width: auto; padding: 0 22px; justify-self: start; }
   padding: 4px 8px;
   min-height: 32px;
 }
+
+/* Verwaltung: Feldgruppe im Formular „Neue Umfrage“, Wach-Status */
+.felder-gruppe { display: grid; gap: 14px; }
+#wach-status { margin: 0 0 12px; }
+#offen-aktionen { margin: 0 0 12px; }
