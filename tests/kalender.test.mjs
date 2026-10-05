@@ -41,7 +41,8 @@ test('Kalender 2027 Bayern, 6-Tage-Woche: 52 KW, Feiertagswochen, Dezember gespe
   assert.equal(k[0].montag, '2027-01-04');
   assert.equal(k[0].arbeitstage, 5);
   assert.equal(k[0].feiertag, 'Heilige Drei Könige');
-  assert.deepEqual(k.filter((w) => w.arbeitstage === 5).map((w) => w.kw), [1, 12, 13, 17, 18, 20, 21, 44, 51]); // 51: Sa 25.12. zählt in der 6-Tage-Woche
+  // KW 51: Sa 25.12. zählt in der 6-Tage-Woche; KW 52 reicht bis Sa 01.01.2028 (Neujahr).
+  assert.deepEqual(k.filter((w) => w.arbeitstage === 5).map((w) => w.kw), [1, 12, 13, 17, 18, 20, 21, 44, 51, 52]);
   assert.deepEqual(k.filter((w) => w.gesperrt).map((w) => w.kw), [48, 49, 50, 51, 52]);
   assert.equal(k[46].monat, 11); // KW 47: 22.–28.11.
   assert.equal(k[47].monat, 12); // KW 48: 29.11.–05.12., Donnerstag 02.12.
@@ -54,6 +55,9 @@ test('Kalender 2026: 53 KW, KW 1 beginnt am 29.12.2025', async () => {
   assert.equal(k[0].montag, '2025-12-29');
   assert.equal(k[0].monat, 1);
   assert.equal(k[52].monat, 12);
+  // KW 53 endet So 03.01.2027; Fr 01.01.2027 (Neujahr) liegt im Folgejahr.
+  assert.equal(k[52].montag, '2026-12-28');
+  assert.equal(k[52].arbeitstage, 5);
 });
 
 test('5-Tage-Woche: Samstags-Feiertag zählt nicht, Werktags-Feiertag schon', async () => {

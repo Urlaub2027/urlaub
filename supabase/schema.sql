@@ -180,7 +180,8 @@ as $$
     from urlaub.umfragen u where u.id = p_umfrage_id
   ),
   frei as (
-    select l.datum, l.name from u, urlaub.landesfeiertage(u.jahr, u.bundesland) l
+    select l.datum, l.name from u, generate_series(u.jahr - 1, u.jahr + 1) j (jahr),
+         urlaub.landesfeiertage(j.jahr, u.bundesland) l
     union
     select f.datum, f.name from urlaub.freie_tage f where f.umfrage_id = p_umfrage_id
   ),
@@ -230,7 +231,8 @@ create unique index if not exists mitarbeiter_name_je_umfrage on urlaub.mitarbei
 
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'abgaben_wochen_gueltig') then
+  if not exists (select 1 from pg_constraint
+                   where conname = 'abgaben_wochen_gueltig' and conrelid = 'urlaub.abgaben'::regclass) then
     alter table urlaub.abgaben add constraint abgaben_wochen_gueltig
       check (cardinality(wochen) >= 1 and array_position(wochen, null) is null
              and 1 <= all (wochen) and 53 >= all (wochen));
