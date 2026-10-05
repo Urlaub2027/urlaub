@@ -21,12 +21,23 @@ Programmierkenntnisse. Menüs bei Supabase und GitHub können leicht anders hei�
 
 Stand 3 bringt den Fragen-Baukasten. Eine Vorabprüfung ist nicht nötig.
 
+**Wichtig – Reihenfolge und Zeitpunkt:** Datenbank und Seite gehören zusammen. Die alte
+Seite funktioniert nicht mit der neuen Datenbank, die neue Seite nicht mit der alten
+(Mitarbeiter und Organisatoren bekämen Fehlermeldungen). Deshalb die Schritte 1 bis 3
+**direkt nacheinander** erledigen, und zwar zu einer ruhigen Zeit (z. B. abends), wenn
+voraussichtlich niemand gerade Wünsche einträgt oder Umfragen bearbeitet.
+
 1. Supabase → **SQL Editor** → „New query“ → kompletten Inhalt von `supabase/schema.sql`
    einfügen → **Run**. Erwartet: „Success“.
    Fragt Supabase nach einer Bestätigung, weil die Datei Löschbefehle für alte
    Bestandteile enthält, mit „Run this query“ bestätigen.
 2. Zur Kontrolle die Datei direkt ein zweites Mal ausführen – es muss wieder „Success“ erscheinen.
-3. Die **Auth-Einstellungen** (Supabase → Authentication → Sign In / Providers) bleiben
+3. **Sofort danach** die neue Seite veröffentlichen: den neuen Stand (Ordner `docs/`) auf
+   GitHub in den Branch `main` übernehmen. GitHub Pages stellt ihn nach einigen Minuten bereit.
+4. Danach alle offenen Seiten (Verwaltung, Mitarbeiter-Links) **neu laden**. GitHub Pages
+   kann die alte Fassung noch bis zu etwa 10 Minuten ausliefern – erscheint noch die alte
+   Seite oder eine Fehlermeldung, kurz warten und erneut laden.
+5. Die **Auth-Einstellungen** (Supabase → Authentication → Sign In / Providers) bleiben
    wie sie sind: Registrierung an, Confirm email aus, anonyme Anmeldung aus.
 
 **Was sich dadurch ändert:** Jede bestehende Umfrage hat danach eine Frage
@@ -86,7 +97,24 @@ Im Reiter **Fragen** baust du das Formular, das die Mitarbeiter sehen.
 
 **Bearbeiten:** Fragetext, Hilfetext (optional), Antwortmöglichkeiten (bei Einfach-/
 Mehrfachauswahl, je mit eigenem Schalter, ↑/↓ und Löschen), Prüfregeln und Bedingungen.
-Der Typ lässt sich nicht mehr ändern, sobald es Antworten gibt.
+
+- **Mit „Speichern“ übernommen** werden: Typ, Fragetext, Hilfetext, die Skala-Angaben
+  (von, bis, Beschriftungen) und bei Urlaubswochen Jahr, Bundesland, Arbeitstage und der
+  Hinweis zu den gesperrten Monaten. Erst danach gelten die Änderungen.
+- **Sofort gespeichert** werden: alle Schalter, ↑/↓, Prüfregeln, die Verknüpfung der
+  Bedingungen und der Text einer Antwortmöglichkeit (beim Verlassen des Feldes). Eine
+  bestehende Bedingung hat einen eigenen **Speichern**-Knopf, eine neue wird mit
+  **Bedingung hinzufügen** angelegt.
+
+**Was gesperrt ist:**
+
+- Sobald es Antworten gibt: der **Typ** der Frage, bei einer Skala **von** und **bis**,
+  bei Urlaubswochen **Jahr**, **Bundesland** und **Arbeitstage**.
+- Eine **Antwortmöglichkeit**, die schon gewählt wurde, lässt sich nicht löschen – nur
+  ausschalten („hat Antworten – nur ausschalten möglich“).
+- Eine Antwortmöglichkeit, die in einer **Bedingung** vorkommt, lässt sich nicht löschen.
+- Der **Typ** einer Frage, auf die sich eine Bedingung einer anderen Frage bezieht, lässt
+  sich nicht ändern. Zuerst die Bedingung entfernen oder ändern.
 
 **Prüfregeln:** Jede Regel hat einen eigenen Schalter; nur eingeschaltete Regeln prüft die
 Datenbank beim Absenden. Änderungen werden sofort gespeichert. Beispiele:
@@ -94,7 +122,10 @@ Pflichtfrage, Mindestens/Höchstens auswählen, Höchstens Zeichen, Kleinste/Gr�
 Frühestens/Spätestens (Datum). Bei **Urlaubswochen** außerdem: Mindestens Wochen,
 Höchstens Wochen, Höchstens Wochen am Stück, Höchstens Urlaubstage, **Gesperrte Monate**
 (mit Hinweis) und **Gesperrte Wochen** (einzelne Kalenderwochen). Gesperrte Monate und
-Gesperrte Wochen sind unabhängig voneinander ein- und ausschaltbar.
+Gesperrte Wochen sind unabhängig voneinander ein- und ausschaltbar. Sind „mindestens“
+und „höchstens“ (bzw. „frühestens“ und „spätestens“) beide eingeschaltet, darf der untere
+Wert nicht größer sein als der obere; gleich ist erlaubt. „Höchstens Wochen am Stück“ und
+„Höchstens Urlaubstage“ sind mindestens 1.
 
 **Bedingungen:** Eine Frage kann nur erscheinen, wenn früher gestellte Fragen passend
 beantwortet wurden.
@@ -105,9 +136,11 @@ beantwortet wurden.
   (eine reicht). Jede Bedingung hat einen eigenen Schalter.
 - Ist die Auslöser-Frage unbeantwortet oder selbst ausgeblendet, gilt die Bedingung als nicht erfüllt.
 - Beispiel: Frage 1 „Hast du Kinder?“ (Ja/Nein). Frage 2 „Welche Ferienwochen brauchst du?“
-  mit der Bedingung „Wenn ‚Hast du Kinder?‘ = Ja“. Nur wer Ja antwortet, sieht Frage 2.
-- Antworten auf Fragen, die beim Absenden ausgeblendet sind, werden verworfen.
-  „Pflicht“ gilt nur für sichtbare Fragen.
+  mit der Bedingung **Wenn „Hast du Kinder?“ ist Ja**. Nur wer Ja antwortet, sieht Frage 2.
+- Antworten auf Fragen, die beim Absenden durch eine Bedingung ausgeblendet sind, werden
+  verworfen. „Pflicht“ gilt nur für sichtbare Fragen.
+- Antworten auf **ausgeschaltete** Fragen bleiben dagegen erhalten, auch wenn die Person
+  erneut absendet; nach dem Wiedereinschalten sind sie wieder da.
 
 ### Einstellungen
 
@@ -130,8 +163,11 @@ und Passwort selbst.
 ### Auswertung
 
 - Oben: wie viele schon abgegeben haben.
-- Reiter **Mitarbeiter**: gewählte Wochen, Urlaubstage, letzte Änderung. Eine Warnung
-  erscheint, wenn eine Abgabe gegen später verschärfte Regeln verstößt.
+- Reiter **Mitarbeiter**: je Person „Abgegeben, Stand …“ (Zeitpunkt der letzten Abgabe)
+  oder „Noch nicht abgegeben“. Verstößt eine Abgabe gegen inzwischen geänderte Regeln
+  (z. B. später verschärft oder neu zur Pflicht gemacht), steht darunter ein Hinweis mit ⚠.
+  Wer welche Wochen gewählt hat, zeigen der Reiter **Antworten** (Namen pro KW) und die
+  Excel-Datei.
 - Reiter **Antworten**: Zusammenfassung je Frage. Ausgeschaltete Fragen und
   Antwortmöglichkeiten sind mit „(aus)“ markiert. Bei einer Urlaubswochen-Frage: Anzahl
   und Namen pro KW; volle Wochen sind rot hinterlegt.

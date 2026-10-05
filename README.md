@@ -17,9 +17,15 @@ mit. Weitere Organisatoren werden per Einladungslink eingeladen. Einrichtung und
 
 Sicherheitsprinzip: Tabellen liegen im Schema `urlaub`, auf das die Rollen `anon`
 und `authenticated` keinen Zugriff haben. Der Browser ruft nur `SECURITY DEFINER`-
-Funktionen in `public` auf: `urlaub_*` (Mitarbeiter-Code), darunter `umfrage_absenden` (prüft und speichert eine Abgabe serverseitig), `einladung_pruefen`,
-`org_*` (nur eigene Umfragen), `haupt_*` (nur Hauptadmin). Registrierungen ohne
-gültige Einladung lehnt ein Trigger auf `auth.users` ab.
+Funktionen in `public` auf:
+
+- ohne Anmeldung, geprüft über den Code aus dem Mitarbeiter-Link: `urlaub_laden`
+  (Formular und eigene Antworten) und `umfrage_absenden` (prüft und speichert eine
+  Abgabe serverseitig);
+- ohne Anmeldung, geprüft über den Einladungscode: `einladung_pruefen`;
+- angemeldet: `org_*` (nur eigene Umfragen) und `haupt_*` (nur Hauptadmin).
+
+Registrierungen ohne gültige Einladung lehnt ein Trigger auf `auth.users` ab.
 
 ## Tests
 
