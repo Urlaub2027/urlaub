@@ -134,6 +134,97 @@ button.zweitrangig {
   margin-bottom: 24px;
 }
 
+/* ------------------------------------------------------- Fragen-Formular */
+
+.pflicht-hinweis { margin: 0 0 16px; }
+.frage { border: 0; margin: 0 0 28px; padding: 0; min-width: 0; }
+.frage > legend.frage-text { font-weight: 600; font-size: 1.05rem; padding: 0 0 6px; }
+.pflicht { color: var(--fehler-rand); }
+.frage-hilfe, .frage-regel { margin: 0 0 8px; color: var(--leise); }
+.frage-regel { font-size: 0.9rem; }
+.frage-fehler {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--fehler);
+  border: 1px solid var(--fehler-rand);
+}
+.frage.hat-fehler { border-left: 3px solid var(--fehler-rand); padding-left: 10px; }
+.frage-hinweis > legend.frage-text { font-weight: 600; }
+
+.wahlen { display: grid; gap: 6px; }
+.wahl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 12px;
+  background: var(--flaeche);
+  border: 1px solid var(--rand);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.wahl:has(input:checked), .skala-wert:has(input:checked) { background: var(--gewaehlt); border-color: var(--akzent); }
+.wahl:has(input:disabled), .skala-wert:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+.wahl input, .skala-wert input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--akzent); }
+
+.skala { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.skala-werte { display: flex; flex-wrap: wrap; gap: 6px; }
+.skala-wert {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 48px;
+  min-height: 60px;
+  padding: 6px;
+  background: var(--flaeche);
+  border: 1px solid var(--rand);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.skala-ende { color: var(--leise); font-size: 0.9rem; }
+@media (max-width: 30rem) { .skala { flex-direction: column; align-items: flex-start; } }
+
+.eingabe {
+  font: inherit;
+  color: var(--text);
+  background: var(--flaeche);
+  border: 1px solid var(--rand);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 44px;
+  width: 100%;
+}
+.eingabe:focus { outline: 2px solid var(--akzent); outline-offset: 1px; }
+.eingabe:disabled { opacity: 0.6; }
+textarea.eingabe { resize: vertical; }
+input[type="number"].eingabe, input[type="date"].eingabe { max-width: 14rem; }
+
+button.frage-leeren {
+  width: auto;
+  min-height: 36px;
+  margin-top: 6px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--akzent);
+  border: 1px solid var(--rand);
+  font-weight: 400;
+  font-size: 0.9rem;
+}
+
+.frage .erklaerung { margin: 0 0 8px; }
+.frage .zaehler {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 8px;
+  padding: 8px 0;
+  background: var(--hintergrund);
+}
+.box-gesperrt h3 { font-size: 1rem; margin: 0 0 6px; }
+
 /* ---------------------------------------------------------------- Admin */
 
 body.admin .kopf, body.admin main { max-width: 60rem; }

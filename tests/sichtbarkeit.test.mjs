@@ -1,10 +1,11 @@
-// Gemeinsame Testfälle für die Sichtbarkeit: hier gegen die Datenbank.
-// Task 4 ergänzt dieselben Fälle gegen docs/formular-logik.js.
+// Gemeinsame Testfälle für die Sichtbarkeit: gegen die Datenbank und gegen
+// docs/formular-logik.js (Browser) – beide müssen dasselbe Ergebnis liefern.
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { neueDatenbank, browser, organisator } from './helfer.mjs';
 import { baueUmfrage, mitIds, schluessel } from './umfrage-bauer.mjs';
+import { sichtbareFragen } from '../docs/formular-logik.js';
 
 const FIXTURE = JSON.parse(readFileSync(new URL('./fixtures/sichtbarkeit-faelle.json', import.meta.url), 'utf8'));
 let db;
@@ -33,3 +34,12 @@ test('Mitarbeiter-Sicht enthält ausgeschaltete Fragen und Bedingungen nicht', a
   const bedingungAus = r.fragen.find((f) => f.id === Number(bau.ids.bedingung_aus));
   assert.deepEqual(bedingungAus.bedingungen, []);
 });
+
+for (const fall of FIXTURE.faelle) {
+  test(`Browser: ${fall.name}`, async () => {
+    const daten = (await browser(db, 'select public.urlaub_laden($1) as r', [code]))[0].r;
+    const sichtbar = sichtbareFragen(daten.fragen, mitIds(bau, fall.antworten));
+    const inReihenfolge = daten.fragen.map((f) => f.id).filter((id) => sichtbar.has(id));
+    assert.deepEqual(schluessel(bau, inReihenfolge), fall.sichtbar);
+  });
+}

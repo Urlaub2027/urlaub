@@ -1,6 +1,7 @@
 // Verbindung zu Supabase (REST und Auth). Fehler werden als Error geworfen:
 // message = Fehlercode der Datenbank (z. B. "LINK_UNGUELTIG"), Auth-Fehlercode
-// (z. B. "user_already_exists") oder "KEINE_VERBINDUNG"; status = HTTP-Status.
+// (z. B. "user_already_exists") oder "KEINE_VERBINDUNG"; status = HTTP-Status;
+// details = PostgREST-Feld "details" (bei ANTWORTEN_UNGUELTIG: JSON-Text {"<frage_id>": "<CODE>"}).
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 
 async function anfrage(pfad, body, token, methode = 'POST') {
@@ -22,6 +23,7 @@ async function anfrage(pfad, body, token, methode = 'POST') {
   if (!antwort.ok) {
     const fehler = new Error(inhalt?.message || inhalt?.error_code || inhalt?.msg || `HTTP_${antwort.status}`);
     fehler.status = antwort.status;
+    fehler.details = inhalt?.details ?? null;
     throw fehler;
   }
   return inhalt;

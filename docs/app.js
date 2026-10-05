@@ -1,108 +1,70 @@
 import { rpc } from './api.js';
+import { codeAusLink, fehlertext, zusammenfassung, zeitpunkt, gesperrteGewaehlte } from './logik.js';
 import {
-  codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, gleicheAuswahl, zeitpunkt,
-  gesperrteBereiche, regelText, gesperrteGewaehlte,
-} from './logik.js';
+  sichtbareFragen, antwortenZumAbsenden, antwortSchluessel, antwortText, istLeer,
+} from './formular-logik.js';
+import { baueFormular } from './formular.js';
 
 const $ = (id) => document.getElementById(id);
 
 let code = null;
-let daten = null;            // letzte Antwort der Datenbank
-let auswahl = new Set();     // aktuell angehakte KWs
+let daten = null;         // letzte Antwort der Datenbank
+let formular = null;      // { antworten, zeigeFehler, sichtbarkeitAktualisieren }
+let gespeichert = '';     // Vergleichsschlüssel der gespeicherten Antworten
 
 function zeige(bereich) {
   for (const id of ['laden', 'fehler', 'formular', 'bestaetigung']) $(id).hidden = id !== bereich;
   window.scrollTo(0, 0);
 }
 
-function zeigeFehler(fehlercode) {
+function zeigeFehlerSeite(fehlercode) {
   $('fehler').textContent = fehlercode === 'KEINE_VERBINDUNG'
     ? 'Keine Verbindung. Bitte prüfe dein Internet und lade die Seite neu.'
     : fehlertext(fehlercode);
   zeige('fehler');
 }
 
-function wochenText(kw) {
-  const k = daten.kalender.find((x) => x.kw === kw);
-  const tage = k.arbeitstage === daten.arbeitstage_pro_woche ? '' : ` · ${k.arbeitstage} Urlaubstage (${k.feiertag})`;
-  return `KW ${k.kw}: ${k.von}–${k.bis}${tage}`;
+const urlaubsfrage = () => daten.fragen.find((f) => f.typ === 'urlaubswochen') || null;
+
+// Gespeicherte Wochen, die inzwischen in einem gesperrten Zeitraum liegen.
+function entfernteWochen() {
+  const f = urlaubsfrage();
+  const gewaehlt = f ? daten.antworten?.[f.id] : null;
+  return Array.isArray(gewaehlt) ? gesperrteGewaehlte(f.urlaubswochen?.kalender || [], gewaehlt) : [];
 }
 
-function baueFormular() {
-  const monate = $('monate');
-  monate.replaceChildren();
-  for (const gruppe of nachMonat(daten.kalender)) {
-    const block = document.createElement('fieldset');
-    block.className = 'monat';
-    const titel = document.createElement('legend');
-    titel.textContent = gruppe.name;
-    block.append(titel);
-    for (const k of gruppe.wochen) {
-      const zeile = document.createElement('label');
-      zeile.className = 'woche';
-      const kaestchen = document.createElement('input');
-      kaestchen.type = 'checkbox';
-      kaestchen.value = String(k.kw);
-      kaestchen.addEventListener('change', () => {
-        if (kaestchen.checked) auswahl.add(k.kw); else auswahl.delete(k.kw);
-        aktualisiere();
-      });
-      const kw = document.createElement('span');
-      kw.className = 'kw';
-      kw.textContent = `KW ${k.kw}`;
-      const datum = document.createElement('span');
-      datum.className = 'datum';
-      datum.textContent = `${k.von}–${k.bis}`;
-      zeile.append(kaestchen, kw, datum);
-      if (k.arbeitstage !== daten.arbeitstage_pro_woche) {
-        const feiertag = document.createElement('span');
-        feiertag.className = 'feiertag';
-        feiertag.textContent = `nur ${k.arbeitstage} Urlaubstage · ${k.feiertag}`;
-        zeile.append(feiertag);
-      }
-      block.append(zeile);
-    }
-    monate.append(block);
-  }
-  $('regeln').textContent = regelText(daten);
-  const bereiche = gesperrteBereiche(daten.kalender);
-  $('gesperrt-box').hidden = bereiche.length === 0;
-  $('gesperrt-liste').replaceChildren(...bereiche.map((b) => {
-    const li = document.createElement('li');
-    li.textContent = b.vonKw === b.bisKw ? `${b.name} (KW ${b.vonKw})` : `${b.name} (KW ${b.vonKw}–${b.bisKw})`;
-    return li;
-  }));
-  $('sperr-hinweis').textContent = daten.sperr_hinweis;
+function wochenText(f, kw) {
+  const uw = f.urlaubswochen || {};
+  const k = (uw.kalender || []).find((x) => x.kw === kw);
+  if (!k) return `KW ${kw} · nicht mehr wählbar`;
+  const tage = k.arbeitstage === uw.arbeitstage_pro_woche ? '' : ` · ${k.arbeitstage} Urlaubstage (${k.feiertag})`;
+  return `KW ${k.kw}: ${k.von}–${k.bis}${tage}${k.gesperrt ? ' · inzwischen gesperrt' : ''}`;
+}
+
+function baue(nurLesen, antworten = daten.antworten) {
+  formular = baueFormular($('fragen'), { ...daten, antworten }, { nurLesen, beiAenderung: aktualisiere });
 }
 
 function aktualisiere() {
-  const z = zusammenfassung(daten.kalender, auswahl, daten.max_wochen, daten.urlaubstage);
-  $('zaehler').textContent = z.text;
-  for (const kaestchen of $('monate').querySelectorAll('input')) {
-    const kw = Number(kaestchen.value);
-    kaestchen.checked = auswahl.has(kw);
-    kaestchen.disabled = istGesperrt(kw, auswahl, z.limitErreicht, daten.offen, daten.max_am_stueck);
-    kaestchen.closest('label').title = kaestchen.disabled && daten.offen && !z.limitErreicht
-      ? `Höchstens ${daten.max_am_stueck} Wochen am Stück` : '';
-    kaestchen.closest('label').classList.toggle('gewaehlt', kaestchen.checked);
-  }
-  const unveraendert = gleicheAuswahl(auswahl, new Set(daten.wochen));
-  $('absenden').disabled = !daten.offen || z.anzahl < daten.min_wochen || unveraendert;
-  $('absenden').textContent = daten.wochen.length ? 'Änderung speichern' : 'Wünsche absenden';
+  // Ohne bisherige Abgabe darf auch "leer" abgesendet werden (die Datenbank meldet Pflichtfragen).
+  const unveraendert = Boolean(daten.geaendert_am)
+    && antwortSchluessel(daten.fragen, formular.antworten()) === gespeichert;
+  $('absenden').disabled = !daten.offen || unveraendert;
+  $('absenden').textContent = daten.geaendert_am ? 'Änderung speichern' : 'Antworten absenden';
   $('meldung').hidden = true;
 }
 
 function zeigeFormular() {
-  const entfernt = gesperrteGewaehlte(daten.kalender, daten.wochen);
-  auswahl = new Set(daten.wochen.filter((kw) => !entfernt.includes(kw)));
-  let status = daten.wochen.length
-    ? `Deine Wünsche sind gespeichert (Stand ${zeitpunkt(daten.geaendert_am)}). Du kannst sie bis ${zeitpunkt(daten.frist)} ändern.`
+  baue(!daten.offen);
+  const entfernt = entfernteWochen();
+  let status = daten.geaendert_am
+    ? `Deine Antworten sind gespeichert (Stand ${zeitpunkt(daten.geaendert_am)}). Du kannst sie bis ${zeitpunkt(daten.frist)} ändern.`
     : `Du hast noch nichts abgegeben. Abgabe bis ${zeitpunkt(daten.frist)}.`;
   if (entfernt.length) {
     const liste = entfernt.map((kw) => `KW ${kw}`).join(', ');
     status += entfernt.length === 1
-      ? ` ${liste} liegt inzwischen in einem gesperrten Zeitraum und wurde aus deiner Auswahl entfernt. Bitte speichere deine Auswahl neu.`
-      : ` ${liste} liegen inzwischen in einem gesperrten Zeitraum und wurden aus deiner Auswahl entfernt. Bitte speichere deine Auswahl neu.`;
+      ? ` ${liste} liegt inzwischen in einem gesperrten Zeitraum und wurde aus deiner Auswahl entfernt. Bitte speichere deine Antworten neu.`
+      : ` ${liste} liegen inzwischen in einem gesperrten Zeitraum und wurden aus deiner Auswahl entfernt. Bitte speichere deine Antworten neu.`;
   }
   $('status').textContent = status;
   aktualisiere();
@@ -110,40 +72,102 @@ function zeigeFormular() {
 }
 
 function zeigeBestaetigung(nachSpeichern) {
+  const sichtbar = sichtbareFragen(daten.fragen, daten.antworten);
+  const beantwortet = daten.fragen.filter((f) => f.typ !== 'hinweis' && sichtbar.has(f.id)
+    && !istLeer(daten.antworten?.[f.id]));
   $('bestaetigung-titel').textContent = nachSpeichern
-    ? `Danke, ${daten.name}! Deine Wünsche sind gespeichert:`
-    : daten.wochen.length ? 'Deine Urlaubswünsche:' : 'Du hast keine Wünsche abgegeben.';
+    ? `Danke, ${daten.name}! Deine Antworten sind gespeichert:`
+    : daten.geaendert_am ? 'Deine Antworten:' : 'Du hast noch nichts abgegeben.';
   const liste = $('bestaetigung-liste');
-  liste.replaceChildren(...daten.wochen.map((kw) => {
+  liste.replaceChildren(...beantwortet.map((f) => {
+    const wert = daten.antworten[f.id];
     const li = document.createElement('li');
-    li.textContent = wochenText(kw);
+    // Urlaubswochen: statt "KW 3, KW 12" je Woche eine Zeile mit Datum und Feiertagen.
+    const mitWochen = f.typ === 'urlaubswochen' && Array.isArray(wert);
+    li.textContent = mitWochen ? `${f.text}:` : `${f.text}: ${antwortText(f, wert)}`;
+    if (mitWochen) {
+      const wochen = document.createElement('ul');
+      wochen.className = 'liste';
+      wochen.append(...wert.map((kw) => {
+        const w = document.createElement('li');
+        w.textContent = wochenText(f, kw);
+        return w;
+      }));
+      li.append(wochen);
+    }
     return li;
   }));
-  const z = zusammenfassung(daten.kalender, new Set(daten.wochen), daten.max_wochen, daten.urlaubstage);
-  $('bestaetigung-stand').textContent = daten.wochen.length
-    ? `${z.text}. Stand: ${zeitpunkt(daten.geaendert_am)}`
-    : '';
+  liste.hidden = beantwortet.length === 0;
+  const stand = [];
+  const uf = urlaubsfrage();
+  if (uf && beantwortet.includes(uf)) {
+    stand.push(zusammenfassung(uf.urlaubswochen?.kalender || [], new Set(daten.antworten[uf.id]),
+      uf.regeln?.max_wochen ?? null, uf.regeln?.max_urlaubstage ?? null).text);
+  }
+  if (daten.geaendert_am) stand.push(`Stand: ${zeitpunkt(daten.geaendert_am)}`);
+  $('bestaetigung-stand').textContent = stand.join('. ');
   $('bestaetigung-frist').textContent = daten.offen
-    ? `Du kannst deine Auswahl bis ${zeitpunkt(daten.frist)} ändern. Öffne dazu einfach wieder deinen Link.`
+    ? `Du kannst deine Antworten bis ${zeitpunkt(daten.frist)} ändern. Öffne dazu einfach wieder deinen Link.`
     : `Die Frist ist am ${zeitpunkt(daten.frist)} abgelaufen. Änderungen sind nicht mehr möglich.`;
   $('aendern').hidden = !daten.offen;
   zeige('bestaetigung');
+}
+
+// Fehler pro Frage anzeigen, zur ersten springen; liefert den Text für die Leiste.
+function markiereFehler(details) {
+  let fehler = null;
+  try {
+    fehler = typeof details === 'string' ? JSON.parse(details) : details;
+  } catch {
+    fehler = null;
+  }
+  if (!fehler || typeof fehler !== 'object') return 'Bitte prüfe deine Antworten.';
+  formular.zeigeFehler(fehler);
+  const sichtbar = (id) => {
+    const feld = $(`frage-${id}`);
+    return Boolean(feld) && !feld.hidden;
+  };
+  const erste = daten.fragen.find((f) => fehler[f.id] && sichtbar(f.id));
+  if (erste) {
+    const feld = $(`frage-${erste.id}`);
+    feld.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    feld.querySelector('input:not(:disabled), textarea:not(:disabled)')?.focus({ preventScroll: true });
+  }
+  // Fehler an einer Frage, die hier fehlt oder verborgen ist: Umfrage wurde inzwischen geändert.
+  if (Object.keys(fehler).some((id) => !sichtbar(id))) {
+    return 'Die Umfrage wurde inzwischen geändert. Bitte lade die Seite neu und prüfe deine Antworten.';
+  }
+  return 'Bitte prüfe die markierten Fragen.';
 }
 
 async function absenden() {
   const knopf = $('absenden');
   knopf.disabled = true;
   knopf.textContent = 'Wird gespeichert …';
+  formular.zeigeFehler(null);
   try {
-    daten = await rpc('urlaub_speichern', { p_code: code, p_wochen: [...auswahl] });
+    daten = await rpc('umfrage_absenden', {
+      p_code: code,
+      p_antworten: antwortenZumAbsenden(daten.fragen, formular.antworten()),
+    });
+    gespeichert = antwortSchluessel(daten.fragen, daten.antworten);
     zeigeBestaetigung(true);
   } catch (fehler) {
-    if (fehler.message === 'LINK_UNGUELTIG') return zeigeFehler(fehler.message);
-    if (fehler.message === 'FRIST_ABGELAUFEN') daten.offen = false;
+    if (fehler.message === 'LINK_UNGUELTIG') return zeigeFehlerSeite(fehler.message);
+    let meldung;
+    if (fehler.message === 'FRIST_ABGELAUFEN') {
+      daten.offen = false;
+      baue(true, formular.antworten());   // Eingaben sichtbar lassen, aber sperren
+      meldung = fehlertext(fehler.message);
+    } else if (fehler.message === 'ANTWORTEN_UNGUELTIG') {
+      meldung = markiereFehler(fehler.details);
+    } else if (fehler.message === 'KEINE_VERBINDUNG') {
+      meldung = 'Keine Verbindung. Deine Antworten sind noch nicht gespeichert. Bitte versuch es noch einmal.';
+    } else {
+      meldung = fehlertext(fehler.message);
+    }
     aktualisiere();
-    $('meldung').textContent = fehler.message === 'KEINE_VERBINDUNG'
-      ? 'Keine Verbindung. Deine Auswahl ist noch nicht gespeichert. Bitte versuch es noch einmal.'
-      : fehlertext(fehler.message);
+    $('meldung').textContent = meldung;
     $('meldung').hidden = false;
   }
 }
@@ -152,16 +176,16 @@ async function start() {
   $('absenden').addEventListener('click', absenden);
   $('aendern').addEventListener('click', zeigeFormular);
   code = codeAusLink(window.location.hash);
-  if (!code) return zeigeFehler('LINK_UNGUELTIG');
+  if (!code) return zeigeFehlerSeite('LINK_UNGUELTIG');
   try {
     daten = await rpc('urlaub_laden', { p_code: code });
   } catch (fehler) {
-    return zeigeFehler(fehler.message);
+    return zeigeFehlerSeite(fehler.message);
   }
+  gespeichert = antwortSchluessel(daten.fragen, daten.antworten);
   $('begruessung').textContent = `Hallo ${daten.name}`;
   $('titel').textContent = daten.titel;
   document.title = daten.titel;
-  baueFormular();
   if (daten.offen) zeigeFormular(); else zeigeBestaetigung(false);
 }
 

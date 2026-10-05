@@ -26,14 +26,24 @@ export function fehlertext(code) {
   return FEHLERTEXTE[code] || 'Das hat nicht geklappt. Bitte versuch es später noch einmal.';
 }
 
+// maxWochen / urlaubstage = null: Regel ausgeschaltet, keine Grenze.
 export function zusammenfassung(kalender, auswahl, maxWochen, urlaubstage) {
   const gewaehlt = kalender.filter((k) => auswahl.has(k.kw));
+  const anzahl = gewaehlt.length;
   const tage = gewaehlt.reduce((summe, k) => summe + k.arbeitstage, 0);
+  const mitMax = maxWochen !== null && maxWochen !== undefined;
+  const mitTagen = urlaubstage !== null && urlaubstage !== undefined;
+  const wochen = mitMax
+    ? `${anzahl} von ${maxWochen} Wochen gewählt`
+    : `${anzahl} ${anzahl === 1 ? 'Woche' : 'Wochen'} gewählt`;
+  const urlaub = mitTagen
+    ? `${tage} von ${urlaubstage} Urlaubstagen`
+    : `${tage} ${tage === 1 ? 'Urlaubstag' : 'Urlaubstage'}`;
   return {
-    anzahl: gewaehlt.length,
+    anzahl,
     tage,
-    limitErreicht: gewaehlt.length >= maxWochen,
-    text: `${gewaehlt.length} von ${maxWochen} Wochen gewählt · ${tage} von ${urlaubstage} Urlaubstagen`,
+    limitErreicht: mitMax && anzahl >= maxWochen,
+    text: `${wochen} · ${urlaub}`,
   };
 }
 

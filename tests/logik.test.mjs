@@ -95,3 +95,12 @@ test('Gewählte Wochen in gesperrten Monaten oder ohne Kalendereintrag werden er
   assert.deepEqual(gesperrteGewaehlte(k, [1, 2, 3, 99]), [2, 99]);
   assert.deepEqual(gesperrteGewaehlte(k, [1, 3]), []);
 });
+
+test('Zähler ohne Wochen- oder Tagesgrenze', () => {
+  const kal = [{ kw: 1, monat: 1, arbeitstage: 5 }, { kw: 2, monat: 1, arbeitstage: 6 }];
+  const ohneMax = zusammenfassung(kal, new Set([1, 2]), null, 36);
+  assert.equal(ohneMax.text, '2 Wochen gewählt · 11 von 36 Urlaubstagen');
+  assert.equal(ohneMax.limitErreicht, false);
+  assert.equal(zusammenfassung(kal, new Set([1]), 6, null).text, '1 von 6 Wochen gewählt · 5 Urlaubstage');
+  assert.equal(zusammenfassung(kal, new Set([1]), null, null).text, '1 Woche gewählt · 5 Urlaubstage');
+});
