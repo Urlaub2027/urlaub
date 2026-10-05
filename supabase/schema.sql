@@ -20,6 +20,9 @@
 create schema if not exists urlaub;
 revoke all on schema urlaub from public, anon, authenticated;
 
+-- Stand 1 hatte urlaub.kalender als View; sie muss vor der gleichnamigen Funktion weg.
+drop view if exists urlaub.links, urlaub.auswertung_personen, urlaub.auswertung_wochen, urlaub.kalender;
+
 -- ---------------------------------------------------------------------------
 -- Tabellen
 -- ---------------------------------------------------------------------------
@@ -219,8 +222,64 @@ as $$
 $$;
 
 -- ---------------------------------------------------------------------------
--- (Task 5 fügt hier die Umstellung von Stand 1 ein)
+-- Umstellung von Stand 1 (eine Umfrage). Läuft nur, solange es die alte
+-- Tabelle urlaub.einstellungen noch gibt.
 -- ---------------------------------------------------------------------------
+
+do $$
+declare
+  v_umfrage bigint;
+begin
+  if to_regclass('urlaub.einstellungen') is null then
+    return;
+  end if;
+
+  alter table urlaub.mitarbeiter add column if not exists umfrage_id bigint
+    references urlaub.umfragen (id) on delete cascade;
+
+  insert into urlaub.app (link_basis)
+  select link_basis from urlaub.einstellungen
+  on conflict (id) do update set link_basis = excluded.link_basis;
+
+  insert into urlaub.organisatoren (user_id, anzeigename, benutzername, ist_hauptadmin)
+  select a.user_id, coalesce(nullif(btrim(a.notiz), ''), 'Admin'), split_part(u.email, '@', 1), true
+  from urlaub.admins a join auth.users u on u.id = a.user_id
+  on conflict (user_id) do nothing;
+
+  if not exists (select 1 from urlaub.organisatoren) then
+    raise exception 'UMSTELLUNG abgebrochen: kein Admin in urlaub.admins gefunden.';
+  end if;
+
+  insert into urlaub.umfragen (organisator_id, titel, jahr, bundesland, arbeitstage_pro_woche,
+                               urlaubstage, max_wochen, max_am_stueck, gesperrte_monate,
+                               sperr_hinweis, frist)
+  select (select user_id from urlaub.organisatoren order by angelegt_am, user_id limit 1),
+         'Urlaubswünsche 2027', 2027, 'BY', 6, e.urlaubstage, e.max_wochen, 3, '{12}',
+         e.dezember_hinweis, e.frist
+  from urlaub.einstellungen e
+  returning id into v_umfrage;
+
+  -- Feiertage aus Stand 1, die keine landesweiten Feiertage sind, bleiben als freie Tage erhalten.
+  insert into urlaub.freie_tage (umfrage_id, datum, name)
+  select v_umfrage, f.datum, f.name
+  from urlaub.feiertage f
+  where extract(year from f.datum) = 2027
+    and not exists (select 1 from urlaub.landesfeiertage(2027, 'BY') l where l.datum = f.datum)
+  on conflict do nothing;
+
+  update urlaub.mitarbeiter set umfrage_id = v_umfrage where umfrage_id is null;
+
+  drop function if exists public.admin_uebersicht();
+  drop function if exists public.admin_mitarbeiter_anlegen(text);
+  drop function if exists public.admin_mitarbeiter_loeschen(bigint);
+  drop function if exists public.admin_link_erneuern(bigint);
+  drop function if exists public.admin_einstellungen_speichern(text, text);
+  drop function if exists urlaub.pruefe_admin();
+  drop table urlaub.einstellungen, urlaub.feiertage, urlaub.admins;
+  alter table urlaub.mitarbeiter drop constraint if exists mitarbeiter_name_key;
+  alter table urlaub.abgaben drop constraint if exists abgaben_wochen_check;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Nacharbeiten an Tabellen (neu und umgestellt)
