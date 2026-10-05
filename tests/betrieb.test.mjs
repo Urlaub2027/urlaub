@@ -45,3 +45,25 @@ test('Rechte: anon nur für die öffentlichen Funktionen, Angemeldete nur für o
     }
   }
 });
+
+test('Mitarbeiter-Liste: trimmt, überspringt Leerzeilen, ganz oder gar nicht', async () => {
+  const u = (await als(db, 'authenticated', chef, "select public.org_umfrage_anlegen('Liste', 2027, 'BY') as id"))[0].id;
+  // Liste als JSON übergeben (so kommt sie auch über PostgREST an)
+  const liste = async (namen, wer = chef) => (await als(db, 'authenticated', wer,
+    'select public.org_mitarbeiter_anlegen_liste($1, array(select jsonb_array_elements_text($2::jsonb))) as n',
+    [u, JSON.stringify(namen)]))[0].n;
+  const namen = async () => (await db.query('select name from urlaub.mitarbeiter where umfrage_id = $1 order by name', [u]))
+    .rows.map((r) => r.name);
+  assert.equal(await liste(['  Anna Huber\t', '', '   ', 'Ben Maier\r']), 2);
+  assert.deepEqual(await namen(), ['Anna Huber', 'Ben Maier']);
+  await assert.rejects(liste(['Cem', 'anna huber']), (e) => e.message === 'NAME_DOPPELT' && e.detail === 'anna huber');
+  await assert.rejects(liste(['Cem', 'Dora', ' CEM ']), (e) => e.message === 'NAME_DOPPELT' && e.detail === 'CEM');
+  assert.deepEqual(await namen(), ['Anna Huber', 'Ben Maier']);
+  await assert.rejects(liste(['', '  ']), /NAME_LEER/);
+  await assert.rejects(liste([]), /NAME_LEER/);
+  await assert.rejects(liste(Array.from({ length: 201 }, (_, i) => `Person ${i}`)), /ZU_VIELE_NAMEN/);
+  assert.equal(await liste(Array.from({ length: 200 }, (_, i) => `Person ${i}`)), 200);
+  const eva = await organisator(db, 'eva');
+  await assert.rejects(liste(['X'], eva), /UMFRAGE_NICHT_GEFUNDEN/);
+  await assert.rejects(browser(db, "select public.org_mitarbeiter_anlegen_liste($1, array['X'])", [u]), /permission denied/);
+});

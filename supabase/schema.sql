@@ -1159,6 +1159,44 @@ begin
 end;
 $$;
 
+-- Mehrere auf einmal, ganz oder gar nicht. Leerraum an den Enden wird entfernt, leere
+-- Zeilen übersprungen. Ein Name doppelt (in der Liste oder schon vorhanden, Groß/klein
+-- egal) → NAME_DOPPELT mit dem Namen als detail. Höchstens 200 auf einmal.
+create or replace function public.org_mitarbeiter_anlegen_liste(p_umfrage_id bigint, p_namen text[])
+returns int
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_u     urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+  v_namen text[];
+  v_name  text;
+begin
+  select coalesce(array_agg(s.n order by s.i), '{}') into v_namen
+  from (select urlaub.trim_alles(t.x) as n, t.i from unnest(p_namen) with ordinality as t (x, i)) s
+  where s.n is not null and s.n <> '';
+  if cardinality(v_namen) = 0 then
+    raise exception 'NAME_LEER';
+  end if;
+  if cardinality(v_namen) > 200 then
+    raise exception 'ZU_VIELE_NAMEN';
+  end if;
+  perform 1 from urlaub.umfragen where id = v_u.id for update;
+  select t.n into v_name
+  from unnest(v_namen) with ordinality as t (n, i)
+  where exists (select 1 from urlaub.mitarbeiter m where m.umfrage_id = v_u.id and lower(m.name) = lower(t.n))
+     or exists (select 1 from unnest(v_namen) with ordinality as d (n, j) where lower(d.n) = lower(t.n) and d.j < t.i)
+  order by t.i
+  limit 1;
+  if v_name is not null then
+    raise exception 'NAME_DOPPELT' using detail = v_name;
+  end if;
+  insert into urlaub.mitarbeiter (umfrage_id, name) select v_u.id, n from unnest(v_namen) as n;
+  return cardinality(v_namen);
+end;
+$$;
+
 create or replace function public.org_mitarbeiter_loeschen(p_mitarbeiter_id bigint)
 returns void
 language plpgsql volatile
@@ -1196,6 +1234,7 @@ revoke all on function public.org_umfrage_speichern(bigint, jsonb)             f
 revoke all on function public.org_freien_tag_hinzufuegen(bigint, date, text)   from public, anon, authenticated;
 revoke all on function public.org_freien_tag_entfernen(bigint, date)           from public, anon, authenticated;
 revoke all on function public.org_mitarbeiter_anlegen(bigint, text)            from public, anon, authenticated;
+revoke all on function public.org_mitarbeiter_anlegen_liste(bigint, text[])    from public, anon, authenticated;
 revoke all on function public.org_mitarbeiter_loeschen(bigint)                 from public, anon, authenticated;
 revoke all on function public.org_link_erneuern(bigint)                        from public, anon, authenticated;
 grant execute on function public.org_ich()                                      to authenticated;
@@ -1208,6 +1247,7 @@ grant execute on function public.org_umfrage_speichern(bigint, jsonb)           
 grant execute on function public.org_freien_tag_hinzufuegen(bigint, date, text) to authenticated;
 grant execute on function public.org_freien_tag_entfernen(bigint, date)         to authenticated;
 grant execute on function public.org_mitarbeiter_anlegen(bigint, text)          to authenticated;
+grant execute on function public.org_mitarbeiter_anlegen_liste(bigint, text[])  to authenticated;
 grant execute on function public.org_mitarbeiter_loeschen(bigint)               to authenticated;
 grant execute on function public.org_link_erneuern(bigint)                      to authenticated;
 
