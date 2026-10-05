@@ -95,10 +95,15 @@ test('Erneutes Absenden ersetzt alles; weggelassene Antworten verschwinden', asy
 test('Pflicht: fehlende Pflichtantworten werden alle gemeldet, nichts gespeichert', async () => {
   await absendenKeys(code2, { urlaub: [5], schicht: 'frueh' });
   const vorher = await gespeichert(code2);
+  const optionen = async () => (await db.query(`select ao.option_id from urlaub.antwort_optionen ao
+    join urlaub.mitarbeiter m on m.id = ao.mitarbeiter_id where m.code = $1 order by 1`, [code2])).rows.map((x) => x.option_id);
+  const optVorher = await optionen();
+  assert.equal(optVorher.length, 1);
   const f = await fehlerVon(bau, absendenKeys(code2, { kinder: true }));
   assert.equal(f.message, 'ANTWORTEN_UNGUELTIG');
   assert.deepEqual(f.fehler, { urlaub: 'PFLICHT', schicht: 'PFLICHT', ferien: 'PFLICHT' });
   assert.deepEqual(await gespeichert(code2), vorher);
+  assert.deepEqual(await optionen(), optVorher);
 });
 
 test('Pflicht gilt nicht für unsichtbare Fragen; Antwort auf unsichtbare Frage wird verworfen', async () => {
@@ -134,6 +139,54 @@ test('Ungültige Formen werden abgelehnt', async () => {
     const f = await fehlerVon(bau, absenden(code2, antworten));
     assert.equal(f.fehler?.[key], codeErwartet, JSON.stringify(zusatz));
   }
+});
+
+test('Wochen als 5.0 geschrieben zählen als ganze Wochen; 5 und 5.0 sind doppelt', async () => {
+  const roh = (json) => browser(db, 'select public.umfrage_absenden($1, $2::jsonb) as r', [code2, json]);
+  const s = String(bau.ids.schicht);
+  const ok = (await roh(`{"${bau.ids.urlaub}": [5.0], "${s}": ${bau.optionen.schicht.frueh}}`))[0].r;
+  assert.ok(ok.geaendert_am);
+  assert.deepEqual((await gespeichert(code2)).urlaub, [5]);
+  const f = await fehlerVon(bau, roh(`{"${bau.ids.urlaub}": [5, 5.0], "${s}": ${bau.optionen.schicht.frueh}}`));
+  assert.equal(f.fehler?.urlaub, 'DOPPELTE_WOCHE');
+});
+
+test('Leerraum: nur Whitespace zählt als leer, Texte werden vollständig getrimmt', async () => {
+  const basis = { urlaub: [5], schicht: 'frueh' };
+  await absendenKeys(code2, { ...basis, lang: '\n\t ' });
+  assert.ok(!('lang' in (await gespeichert(code2))));
+  await absendenKeys(code2, { ...basis, lang: '  hallo\n' });
+  assert.equal((await gespeichert(code2)).lang, 'hallo');
+  const fid = bau.ids.lang;
+  await db.query("insert into urlaub.regeln (frage_id, art) values ($1, 'pflicht')", [fid]);
+  try {
+    const f = await fehlerVon(bau, absendenKeys(code2, { ...basis, lang: '\n\t ' }));
+    assert.equal(f.fehler?.lang, 'PFLICHT');
+  } finally {
+    await db.query("delete from urlaub.regeln where frage_id = $1 and art = 'pflicht'", [fid]);
+  }
+});
+
+test('Ausgeschaltete Optionen erscheinen nicht mehr in gespeicherten Antworten', async () => {
+  await absendenKeys(code2, { urlaub: [5], schicht: 'spaet', tage: ['mo', 'di'] });
+  const b = { schicht: bau.optionen.schicht.spaet, di: bau.optionen.tage.di, mo: bau.optionen.tage.mo };
+  await db.query('update urlaub.optionen set aktiv = false where id = any($1)', [[b.schicht, b.di]]);
+  try {
+    const g = await gespeichert(code2);
+    assert.ok(!('schicht' in g));
+    assert.deepEqual(g.tage, [Number(b.mo)]);
+    await db.query('update urlaub.optionen set aktiv = false where id = $1', [b.mo]);
+    assert.ok(!('tage' in (await gespeichert(code2))));
+  } finally {
+    await db.query('update urlaub.optionen set aktiv = true where id = any($1)', [[b.schicht, b.di, b.mo]]);
+  }
+});
+
+test('Ungültige Quellantwort: abhängige Frage bleibt verborgen, ihre Pflicht wird nicht gemeldet', async () => {
+  const antworten = mitIds(bau, { urlaub: [5], schicht: 'frueh' });
+  antworten[String(bau.ids.kinder)] = 'ja'; // ungültig; ferien (Pflicht) hängt an kinder = true
+  const f = await fehlerVon(bau, absenden(code2, antworten));
+  assert.deepEqual(f.fehler, { kinder: 'UNGUELTIGE_ANTWORT' });
 });
 
 test('Prüfregeln je Typ; ausgeschaltete Regel greift nicht', async () => {

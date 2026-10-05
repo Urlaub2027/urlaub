@@ -414,6 +414,15 @@ drop function if exists public.urlaub_speichern(text, int[]);
 drop function if exists urlaub.regelverstoss(bigint, int[]);
 drop function if exists urlaub.antwort(bigint);
 
+-- Entfernt Leerraum (Leerzeichen, Tabs, Zeilenumbrüche) an beiden Enden; btrim() kennt nur Leerzeichen.
+create or replace function urlaub.trim_alles(p_text text)
+returns text
+language sql immutable
+set search_path = ''
+as $$
+  select regexp_replace(p_text, '^\s+|\s+$', '', 'g')
+$$;
+
 -- Leer = nicht beantwortet: fehlt, JSON-null, leere Liste, leerer Text.
 create or replace function urlaub.ist_leer(p_wert jsonb)
 returns boolean
@@ -423,7 +432,7 @@ as $$
   select p_wert is null
       or jsonb_typeof(p_wert) = 'null'
       or (jsonb_typeof(p_wert) = 'array' and jsonb_array_length(p_wert) = 0)
-      or (jsonb_typeof(p_wert) = 'string' and btrim(p_wert #>> '{}') = '')
+      or (jsonb_typeof(p_wert) = 'string' and urlaub.trim_alles(p_wert #>> '{}') = '')
 $$;
 
 -- Bedingung erfüllt? Es zählen nur bereits geprüfte Antworten (p_gueltig) von Fragen,
@@ -481,7 +490,7 @@ begin
                    or (e #>> '{}')::numeric <> trunc((e #>> '{}')::numeric)) then
     return 'UNGUELTIGE_WOCHE';
   end if;
-  select array_agg((e #>> '{}')::int) into v_liste from jsonb_array_elements(p_wochen) e;
+  select array_agg(((e #>> '{}')::numeric)::int) into v_liste from jsonb_array_elements(p_wochen) e;
   select coalesce(array_agg(k.kw), '{}') into v_erlaubt from urlaub.kalender(p_frage.umfrage_id) k where not k.gesperrt;
   if exists (select 1 from unnest(v_liste) x where not (x = any (v_erlaubt))) then
     return 'UNGUELTIGE_WOCHE';
@@ -581,7 +590,7 @@ begin
     if v_typ <> 'string' then
       return 'UNGUELTIGE_ANTWORT';
     end if;
-    v_text := btrim(p_wert #>> '{}');
+    v_text := urlaub.trim_alles(p_wert #>> '{}');
     if char_length(v_text) > (case p_frage.typ when 'text_kurz' then 200 else 5000 end)
        or (v_regel ? 'max_zeichen' and char_length(v_text) > (v_regel ->> 'max_zeichen')::int) then
       return 'TEXT_ZU_LANG';
@@ -619,7 +628,7 @@ as $$
       (select jsonb_agg(to_jsonb(((e #>> '{}')::numeric)::bigint) order by (e #>> '{}')::numeric)
        from jsonb_array_elements(p_wert) e)
     when p_frage.typ = 'einfach' then to_jsonb(((p_wert #>> '{}')::numeric)::bigint)
-    when p_frage.typ in ('text_kurz', 'text_lang') then to_jsonb(btrim(p_wert #>> '{}'))
+    when p_frage.typ in ('text_kurz', 'text_lang') then to_jsonb(urlaub.trim_alles(p_wert #>> '{}'))
     else p_wert
   end
 $$;
@@ -734,10 +743,25 @@ as $$
     'geaendert_am', a.geaendert_am,
     'fragen', coalesce((select jsonb_agg(urlaub.frage_json(f, false) order by f.position, f.id)
                         from urlaub.fragen f where f.umfrage_id = u.id and f.aktiv), '[]'::jsonb),
-    'antworten', coalesce((select jsonb_object_agg(an.frage_id::text, an.wert)
-                           from urlaub.antworten an
-                           join urlaub.fragen f on f.id = an.frage_id and f.aktiv
-                           where an.mitarbeiter_id = m.id), '{}'::jsonb))
+    -- Gespeicherte Antworten ohne inzwischen ausgeschaltete Optionen.
+    'antworten', coalesce((select jsonb_object_agg(x.frage_id::text, x.wert)
+                           from (select an.frage_id,
+                                        case f.typ
+                                          when 'einfach' then
+                                            case when exists (select 1 from urlaub.optionen o
+                                                              where o.id = (an.wert #>> '{}')::bigint and o.aktiv)
+                                                 then an.wert end
+                                          when 'mehrfach' then
+                                            (select jsonb_agg(e order by (e #>> '{}')::numeric)
+                                             from jsonb_array_elements(an.wert) e
+                                             where exists (select 1 from urlaub.optionen o
+                                                           where o.id = (e #>> '{}')::bigint and o.aktiv))
+                                          else an.wert
+                                        end as wert
+                                 from urlaub.antworten an
+                                 join urlaub.fragen f on f.id = an.frage_id and f.aktiv
+                                 where an.mitarbeiter_id = m.id) x
+                           where x.wert is not null), '{}'::jsonb))
   from urlaub.mitarbeiter m
   join urlaub.umfragen u on u.id = m.umfrage_id
   left join urlaub.abgaben a on a.mitarbeiter_id = m.id
@@ -777,7 +801,7 @@ declare
   v_wert  jsonb;
   v_typ   text;
 begin
-  select * into v_m from urlaub.mitarbeiter where code = p_code;
+  select * into v_m from urlaub.mitarbeiter where code = p_code for update;
   if not found then
     raise exception 'LINK_UNGUELTIG';
   end if;
