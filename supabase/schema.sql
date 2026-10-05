@@ -382,7 +382,353 @@ grant execute on function public.urlaub_laden(text)            to anon;
 grant execute on function public.urlaub_speichern(text, int[]) to anon;
 
 -- ---------------------------------------------------------------------------
--- (Task 3–4 fügen hier weitere Funktionen ein)
+-- Organisatoren: Hilfsfunktionen (intern)
+-- ---------------------------------------------------------------------------
+
+create or replace function urlaub.ich()
+returns urlaub.organisatoren
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_o urlaub.organisatoren;
+begin
+  select * into v_o from urlaub.organisatoren where user_id = auth.uid() and not gesperrt;
+  if not found then
+    raise exception 'KEIN_ZUGRIFF';
+  end if;
+  return v_o;
+end;
+$$;
+
+-- Fremde und nicht vorhandene Umfragen sind bewusst nicht unterscheidbar.
+create or replace function urlaub.eigene_umfrage(p_umfrage_id bigint)
+returns urlaub.umfragen
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (urlaub.ich()).user_id;
+  v_u   urlaub.umfragen;
+begin
+  select * into v_u from urlaub.umfragen where id = p_umfrage_id and organisator_id = v_uid;
+  if not found then
+    raise exception 'UMFRAGE_NICHT_GEFUNDEN';
+  end if;
+  return v_u;
+end;
+$$;
+
+create or replace function urlaub.eigener_mitarbeiter(p_mitarbeiter_id bigint)
+returns urlaub.mitarbeiter
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (urlaub.ich()).user_id;
+  v_m   urlaub.mitarbeiter;
+begin
+  select m.* into v_m
+  from urlaub.mitarbeiter m join urlaub.umfragen u on u.id = m.umfrage_id
+  where m.id = p_mitarbeiter_id and u.organisator_id = v_uid;
+  if not found then
+    raise exception 'MITARBEITER_NICHT_GEFUNDEN';
+  end if;
+  return v_m;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Organisatoren: Funktionen für die Verwaltung
+-- ---------------------------------------------------------------------------
+
+create or replace function public.org_ich()
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_o urlaub.organisatoren := urlaub.ich();
+begin
+  return jsonb_build_object('anzeigename', v_o.anzeigename, 'benutzername', v_o.benutzername,
+                            'ist_hauptadmin', v_o.ist_hauptadmin);
+end;
+$$;
+
+create or replace function public.org_umfragen()
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (urlaub.ich()).user_id;
+begin
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'id',          u.id,
+             'titel',       u.titel,
+             'jahr',        u.jahr,
+             'bundesland',  u.bundesland,
+             'frist',       u.frist,
+             'offen',       now() < u.frist,
+             'mitarbeiter', (select count(*) from urlaub.mitarbeiter m where m.umfrage_id = u.id),
+             'abgegeben',   (select count(*) from urlaub.mitarbeiter m
+                               join urlaub.abgaben a on a.mitarbeiter_id = m.id where m.umfrage_id = u.id))
+           order by u.jahr desc, u.titel)
+    from urlaub.umfragen u where u.organisator_id = v_uid), '[]'::jsonb);
+end;
+$$;
+
+-- Vorgabe-Frist: 30.11. des Vorjahres, 23:59:59 deutscher Zeit.
+create or replace function public.org_umfrage_anlegen(p_titel text, p_jahr int, p_bundesland text)
+returns bigint
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (urlaub.ich()).user_id;
+  v_id  bigint;
+begin
+  if p_titel is null or btrim(p_titel) = '' then
+    raise exception 'TITEL_LEER';
+  end if;
+  begin
+    insert into urlaub.umfragen (organisator_id, titel, jahr, bundesland, frist)
+    values (v_uid, btrim(p_titel), p_jahr, p_bundesland,
+            make_timestamp(p_jahr - 1, 11, 30, 23, 59, 59) at time zone 'Europe/Berlin')
+    returning id into v_id;
+  exception when check_violation or not_null_violation or data_exception then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end;
+  return v_id;
+end;
+$$;
+
+create or replace function public.org_umfrage_loeschen(p_umfrage_id bigint)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_u urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+begin
+  delete from urlaub.umfragen where id = v_u.id;
+end;
+$$;
+
+create or replace function public.org_umfrage(p_umfrage_id bigint)
+returns jsonb
+language plpgsql stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_u     urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+  v_basis text := (select link_basis from urlaub.app);
+begin
+  return jsonb_build_object(
+    'einstellungen', jsonb_build_object(
+      'id',                    v_u.id,
+      'titel',                 v_u.titel,
+      'jahr',                  v_u.jahr,
+      'bundesland',            v_u.bundesland,
+      'arbeitstage_pro_woche', v_u.arbeitstage_pro_woche,
+      'urlaubstage',           v_u.urlaubstage,
+      'min_wochen',            v_u.min_wochen,
+      'max_wochen',            v_u.max_wochen,
+      'max_am_stueck',         v_u.max_am_stueck,
+      'gesperrte_monate',      to_jsonb(v_u.gesperrte_monate),
+      'sperr_hinweis',         v_u.sperr_hinweis,
+      'frist',                 v_u.frist,
+      'frist_eingabe',         to_char(v_u.frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI'),
+      'offen',                 now() < v_u.frist,
+      'grunddaten_aenderbar',  not exists (select 1 from urlaub.mitarbeiter m
+                                            join urlaub.abgaben a on a.mitarbeiter_id = m.id
+                                            where m.umfrage_id = v_u.id)),
+    'freie_tage', coalesce((
+      select jsonb_agg(jsonb_build_object('datum', f.datum, 'name', f.name) order by f.datum)
+      from urlaub.freie_tage f where f.umfrage_id = v_u.id), '[]'::jsonb),
+    'mitarbeiter', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',            m.id,
+               'name',          m.name,
+               'link',          v_basis || '#' || m.code,
+               'wochen',        coalesce(to_jsonb(a.wochen), '[]'::jsonb),
+               'urlaubstage',   (select coalesce(sum(k.arbeitstage), 0)::int
+                                   from urlaub.kalender(v_u.id) k where k.kw = any (a.wochen)),
+               'geaendert_am',  a.geaendert_am,
+               'regelverstoss', case when a.wochen is null then null
+                                     else urlaub.regelverstoss(v_u.id, a.wochen) end)
+             order by m.name)
+      from urlaub.mitarbeiter m
+      left join urlaub.abgaben a on a.mitarbeiter_id = m.id
+      where m.umfrage_id = v_u.id), '[]'::jsonb),
+    'kalender', urlaub.kalender_json(v_u.id));
+end;
+$$;
+
+-- Die Besitzprüfung (declare-Block) liegt bewusst außerhalb des inneren
+-- exception-Blocks, damit UMFRAGE_NICHT_GEFUNDEN nicht umgewandelt wird.
+create or replace function public.org_umfrage_speichern(p_umfrage_id bigint, p_daten jsonb)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_u      urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+  v_frist  text := btrim(p_daten ->> 'frist');
+  v_monate int[];
+begin
+  if exists (select 1 from urlaub.mitarbeiter m join urlaub.abgaben a on a.mitarbeiter_id = m.id
+             where m.umfrage_id = v_u.id)
+     and (   (p_daten ? 'jahr'       and (p_daten ->> 'jahr') is distinct from v_u.jahr::text)
+          or (p_daten ? 'bundesland' and (p_daten ->> 'bundesland') is distinct from v_u.bundesland)
+          or (p_daten ? 'arbeitstage_pro_woche'
+              and (p_daten ->> 'arbeitstage_pro_woche') is distinct from v_u.arbeitstage_pro_woche::text)) then
+    raise exception 'GRUNDDATEN_GESPERRT';
+  end if;
+  if p_daten ? 'frist' and (v_frist is null or v_frist = '') then
+    raise exception 'FRIST_LEER';
+  end if;
+  begin
+    if p_daten ? 'gesperrte_monate' then
+      select coalesce(array_agg(x::int order by x::int), '{}')
+      into v_monate from jsonb_array_elements_text(p_daten -> 'gesperrte_monate') x;
+    end if;
+    update urlaub.umfragen set
+      titel                 = coalesce(btrim(p_daten ->> 'titel'), titel),
+      jahr                  = coalesce((p_daten ->> 'jahr')::int, jahr),
+      bundesland            = coalesce(p_daten ->> 'bundesland', bundesland),
+      arbeitstage_pro_woche = coalesce((p_daten ->> 'arbeitstage_pro_woche')::int, arbeitstage_pro_woche),
+      urlaubstage           = coalesce((p_daten ->> 'urlaubstage')::int, urlaubstage),
+      min_wochen            = coalesce((p_daten ->> 'min_wochen')::int, min_wochen),
+      max_wochen            = coalesce((p_daten ->> 'max_wochen')::int, max_wochen),
+      max_am_stueck         = coalesce((p_daten ->> 'max_am_stueck')::int, max_am_stueck),
+      gesperrte_monate      = coalesce(v_monate, gesperrte_monate),
+      sperr_hinweis         = coalesce(btrim(p_daten ->> 'sperr_hinweis'), sperr_hinweis),
+      frist = case
+                when v_frist is null
+                  or to_char(frist at time zone 'Europe/Berlin', 'YYYY-MM-DD"T"HH24:MI') = v_frist
+                then frist
+                else v_frist::timestamp at time zone 'Europe/Berlin'
+              end
+    where id = v_u.id;
+  exception when check_violation or not_null_violation or data_exception then
+    raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end;
+end;
+$$;
+
+create or replace function public.org_freien_tag_hinzufuegen(p_umfrage_id bigint, p_datum date, p_name text)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_u urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+begin
+  if p_datum is null or extract(year from p_datum) <> v_u.jahr then
+    raise exception 'DATUM_FALSCHES_JAHR';
+  end if;
+  if p_name is null or btrim(p_name) = '' then
+    raise exception 'NAME_LEER';
+  end if;
+  insert into urlaub.freie_tage (umfrage_id, datum, name) values (v_u.id, p_datum, btrim(p_name))
+  on conflict (umfrage_id, datum) do update set name = excluded.name;
+end;
+$$;
+
+create or replace function public.org_freien_tag_entfernen(p_umfrage_id bigint, p_datum date)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_u urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+begin
+  delete from urlaub.freie_tage where umfrage_id = v_u.id and datum = p_datum;
+end;
+$$;
+
+create or replace function public.org_mitarbeiter_anlegen(p_umfrage_id bigint, p_name text)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_u urlaub.umfragen := urlaub.eigene_umfrage(p_umfrage_id);
+begin
+  if p_name is null or btrim(p_name) = '' then
+    raise exception 'NAME_LEER';
+  end if;
+  if exists (select 1 from urlaub.mitarbeiter
+             where umfrage_id = v_u.id and lower(name) = lower(btrim(p_name))) then
+    raise exception 'NAME_DOPPELT';
+  end if;
+  insert into urlaub.mitarbeiter (umfrage_id, name) values (v_u.id, btrim(p_name));
+end;
+$$;
+
+create or replace function public.org_mitarbeiter_loeschen(p_mitarbeiter_id bigint)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_m urlaub.mitarbeiter := urlaub.eigener_mitarbeiter(p_mitarbeiter_id);
+begin
+  delete from urlaub.mitarbeiter where id = v_m.id;  -- Abgabe wird mitgelöscht
+end;
+$$;
+
+-- Neuer Code: der alte Link funktioniert sofort nicht mehr, die Abgabe bleibt.
+create or replace function public.org_link_erneuern(p_mitarbeiter_id bigint)
+returns void
+language plpgsql volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_m urlaub.mitarbeiter := urlaub.eigener_mitarbeiter(p_mitarbeiter_id);
+begin
+  update urlaub.mitarbeiter set code = replace(gen_random_uuid()::text, '-', '') where id = v_m.id;
+end;
+$$;
+
+revoke all on function public.org_ich()                                        from public, anon, authenticated;
+revoke all on function public.org_umfragen()                                   from public, anon, authenticated;
+revoke all on function public.org_umfrage_anlegen(text, int, text)             from public, anon, authenticated;
+revoke all on function public.org_umfrage_loeschen(bigint)                     from public, anon, authenticated;
+revoke all on function public.org_umfrage(bigint)                              from public, anon, authenticated;
+revoke all on function public.org_umfrage_speichern(bigint, jsonb)             from public, anon, authenticated;
+revoke all on function public.org_freien_tag_hinzufuegen(bigint, date, text)   from public, anon, authenticated;
+revoke all on function public.org_freien_tag_entfernen(bigint, date)           from public, anon, authenticated;
+revoke all on function public.org_mitarbeiter_anlegen(bigint, text)            from public, anon, authenticated;
+revoke all on function public.org_mitarbeiter_loeschen(bigint)                 from public, anon, authenticated;
+revoke all on function public.org_link_erneuern(bigint)                        from public, anon, authenticated;
+grant execute on function public.org_ich()                                      to authenticated;
+grant execute on function public.org_umfragen()                                 to authenticated;
+grant execute on function public.org_umfrage_anlegen(text, int, text)           to authenticated;
+grant execute on function public.org_umfrage_loeschen(bigint)                   to authenticated;
+grant execute on function public.org_umfrage(bigint)                            to authenticated;
+grant execute on function public.org_umfrage_speichern(bigint, jsonb)           to authenticated;
+grant execute on function public.org_freien_tag_hinzufuegen(bigint, date, text) to authenticated;
+grant execute on function public.org_freien_tag_entfernen(bigint, date)         to authenticated;
+grant execute on function public.org_mitarbeiter_anlegen(bigint, text)          to authenticated;
+grant execute on function public.org_mitarbeiter_loeschen(bigint)               to authenticated;
+grant execute on function public.org_link_erneuern(bigint)                      to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- (Task 4 fügt hier Einladungen und Hauptadmin-Funktionen ein)
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------

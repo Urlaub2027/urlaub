@@ -1,138 +1,203 @@
-// Testet die Admin-Funktionen aus supabase/schema.sql. auth.uid() wird wie in
-// Supabase aus den JWT-Angaben der Anfrage gelesen (request.jwt.claims).
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { PGlite } from '@electric-sql/pglite';
-
-const SCHEMA = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
-const ADMIN = '11111111-1111-1111-1111-111111111111';
-const FREMD = '22222222-2222-2222-2222-222222222222';
+import { neueDatenbank, als, browser, organisator } from './helfer.mjs';
 
 let db;
+let chef;
+let eva;
 
 before(async () => {
-  db = new PGlite();
-  await db.exec(`
-    create role anon; create role authenticated; create role service_role;
-    grant usage on schema public to anon, authenticated, service_role;
-    alter default privileges in schema public grant all on tables    to anon, authenticated, service_role;
-    alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
-    create schema auth;
-    grant usage on schema auth to anon, authenticated;
-    create or replace function auth.uid() returns uuid language sql stable as $$
-      select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid
-    $$;
-  `);
-  await db.exec(SCHEMA);
-  await db.exec(SCHEMA);
-  await db.query('insert into urlaub.admins (user_id, notiz) values ($1, $2)', [ADMIN, 'aw']);
+  db = await neueDatenbank();
+  chef = await organisator(db, 'chef', { hauptadmin: true });
+  eva = await organisator(db, 'eva');
 });
 
-// Führt SQL als Rolle mit optionaler Nutzer-ID aus, wie PostgREST es tut.
-async function als(rolle, nutzer, sql, params = []) {
-  await db.exec(`set role ${rolle}`);
-  await db.query("select set_config('request.jwt.claims', $1, false)",
-    [nutzer ? JSON.stringify({ sub: nutzer, role: rolle }) : '']);
-  try {
-    return (await db.query(sql, params)).rows;
-  } finally {
-    await db.exec('reset role');
-  }
+const alsChef = async (sql, params) => (await als(db, 'authenticated', chef, sql, params))[0];
+const alsEva = async (sql, params) => (await als(db, 'authenticated', eva, sql, params))[0];
+const umfrageVon = async (wer, id) => (await als(db, 'authenticated', wer,
+  'select public.org_umfrage($1) as r', [id]))[0].r;
+
+async function neueUmfrage(wer, titel = 'Team A', jahr = 2027, land = 'BY') {
+  return (await als(db, 'authenticated', wer, 'select public.org_umfrage_anlegen($1, $2, $3) as id',
+    [titel, jahr, land]))[0].id;
 }
-const admin = (sql, params) => als('authenticated', ADMIN, sql, params);
-const uebersicht = async () => (await admin('select public.admin_uebersicht() as r'))[0].r;
 
-test('Admin sieht Einstellungen, Mitarbeiter und Kalender', async () => {
-  await admin('select public.admin_mitarbeiter_anlegen($1)', ['  Zoe  ']);
-  await admin('select public.admin_mitarbeiter_anlegen($1)', ['Anna']);
-  const r = await uebersicht();
-  assert.deepEqual(r.mitarbeiter.map((m) => m.name), ['Anna', 'Zoe']);
-  assert.match(r.mitarbeiter[0].link, /^https:\/\/urlaub2027\.github\.io\/urlaub\/#[0-9a-f]{32}$/);
-  assert.deepEqual(r.mitarbeiter[0].wochen, []);
-  assert.equal(r.mitarbeiter[0].urlaubstage, 0);
-  assert.equal(r.kalender.length, 47);
-  assert.equal(r.einstellungen.max_wochen, 6);
+test('org_ich liefert eigenes Profil', async () => {
+  const r = (await alsChef('select public.org_ich() as r')).r;
+  assert.deepEqual(r, { anzeigename: 'chef', benutzername: 'chef', ist_hauptadmin: true });
 });
 
-test('Abgaben erscheinen in der Übersicht mit Urlaubstagen', async () => {
-  await db.exec("update urlaub.einstellungen set frist = now() + interval '1 day'");
-  const code = (await db.query("select code from urlaub.mitarbeiter where name = 'Anna'")).rows[0].code;
-  await als('anon', null, 'select public.urlaub_speichern($1, $2::int[])', [code, [1, 30]]);
-  const anna = (await uebersicht()).mitarbeiter.find((m) => m.name === 'Anna');
-  assert.deepEqual(anna.wochen, [1, 30]);
-  assert.equal(anna.urlaubstage, 11);
-  assert.ok(anna.geaendert_am);
+test('Umfrage anlegen mit Vorgaben', async () => {
+  const id = await neueUmfrage(chef, '  Team A  ');
+  const u = await umfrageVon(chef, id);
+  const e = u.einstellungen;
+  assert.equal(e.titel, 'Team A');
+  assert.equal(e.jahr, 2027);
+  assert.equal(e.bundesland, 'BY');
+  assert.equal(e.arbeitstage_pro_woche, 6);
+  assert.equal(e.urlaubstage, 36);
+  assert.equal(e.min_wochen, 1);
+  assert.equal(e.max_wochen, 6);
+  assert.equal(e.max_am_stueck, 3);
+  assert.deepEqual(e.gesperrte_monate, [12]);
+  assert.equal(e.frist_eingabe, '2026-11-30T23:59');
+  assert.equal(e.grunddaten_aenderbar, true);
+  assert.equal(u.kalender.length, 52);
+  assert.deepEqual(u.mitarbeiter, []);
+  const liste = (await alsChef('select public.org_umfragen() as r')).r;
+  assert.ok(liste.some((x) => x.id === Number(id) && x.mitarbeiter === 0 && x.abgegeben === 0));
 });
 
-test('Doppelter oder leerer Name wird abgelehnt', async () => {
-  await assert.rejects(admin('select public.admin_mitarbeiter_anlegen($1)', ['anna']), /NAME_DOPPELT/);
-  await assert.rejects(admin('select public.admin_mitarbeiter_anlegen($1)', ['   ']), /NAME_LEER/);
-  await assert.rejects(admin('select public.admin_mitarbeiter_anlegen($1)', [null]), /NAME_LEER/);
+test('Ungültige Angaben beim Anlegen', async () => {
+  await assert.rejects(neueUmfrage(chef, '   '), /TITEL_LEER/);
+  await assert.rejects(neueUmfrage(chef, 'X', 2027, 'XX'), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(neueUmfrage(chef, 'X', 1999), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(neueUmfrage(chef, 'X', null), /UNGUELTIGE_EINSTELLUNG/);
 });
 
-test('Link erneuern: alter Code ungültig, Abgabe bleibt', async () => {
-  const vorher = (await db.query("select id, code from urlaub.mitarbeiter where name = 'Anna'")).rows[0];
-  await admin('select public.admin_link_erneuern($1)', [vorher.id]);
+test('Mitarbeiter anlegen: Name je Umfrage eindeutig (Groß/klein egal)', async () => {
+  const a = await neueUmfrage(chef, 'A');
+  const b = await neueUmfrage(chef, 'B');
+  await alsChef('select public.org_mitarbeiter_anlegen($1, $2)', [a, 'Anna']);
+  await assert.rejects(alsChef('select public.org_mitarbeiter_anlegen($1, $2)', [a, ' anna ']), /NAME_DOPPELT/);
+  await assert.rejects(alsChef('select public.org_mitarbeiter_anlegen($1, $2)', [a, '  ']), /NAME_LEER/);
+  await alsChef('select public.org_mitarbeiter_anlegen($1, $2)', [b, 'Anna']);
+  const u = await umfrageVon(chef, a);
+  assert.equal(u.mitarbeiter.length, 1);
+  assert.match(u.mitarbeiter[0].link, /^https:\/\/urlaub2027\.github\.io\/urlaub\/#[0-9a-f]{32}$/);
+  assert.equal(u.mitarbeiter[0].regelverstoss, null);
+});
+
+test('Einstellungen speichern', async () => {
+  const id = await neueUmfrage(chef);
+  await alsChef('select public.org_umfrage_speichern($1, $2)', [id, {
+    titel: 'Neu', max_am_stueck: 2, gesperrte_monate: [12, 7], sperr_hinweis: 'Sommer und Dezember gesperrt',
+    frist: '2026-12-15T18:00', urlaubstage: 30, min_wochen: 2, max_wochen: 5,
+  }]);
+  const e = (await umfrageVon(chef, id)).einstellungen;
+  assert.equal(e.titel, 'Neu');
+  assert.equal(e.max_am_stueck, 2);
+  assert.deepEqual(e.gesperrte_monate, [7, 12]);
+  assert.equal(e.sperr_hinweis, 'Sommer und Dezember gesperrt');
+  assert.equal(e.frist_eingabe, '2026-12-15T18:00');
+  assert.equal(e.urlaubstage, 30);
+  assert.equal(e.min_wochen, 2);
+  assert.equal(e.max_wochen, 5);
+  // Frist unverändert übergeben: Sekunden bleiben erhalten
+  await db.query("update urlaub.umfragen set frist = '2026-11-30 23:59:59 Europe/Berlin' where id = $1", [id]);
+  await alsChef('select public.org_umfrage_speichern($1, $2)', [id, { titel: 'Neu2', frist: '2026-11-30T23:59' }]);
+  const s = (await db.query("select to_char(frist at time zone 'Europe/Berlin', 'HH24:MI:SS') as t from urlaub.umfragen where id = $1", [id])).rows[0].t;
+  assert.equal(s, '23:59:59');
+});
+
+test('Ungültige Einstellungen werden abgelehnt', async () => {
+  const id = await neueUmfrage(chef);
+  const speichern = (daten) => alsChef('select public.org_umfrage_speichern($1, $2)', [id, daten]);
+  await assert.rejects(speichern({ min_wochen: 4, max_wochen: 3 }), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(speichern({ gesperrte_monate: [13] }), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(speichern({ gesperrte_monate: 'Dezember' }), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(speichern({ urlaubstage: 'viel' }), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(speichern({ titel: '' }), /UNGUELTIGE_EINSTELLUNG/);
+  await assert.rejects(speichern({ frist: '' }), /FRIST_LEER/);
+  await assert.rejects(speichern({ frist: 'morgen' }), /UNGUELTIGE_EINSTELLUNG/);
+});
+
+test('Grunddaten nur ohne Abgaben änderbar; Regelverstoß wird markiert', async () => {
+  const id = await neueUmfrage(chef);
+  await alsChef('select public.org_umfrage_speichern($1, $2)', [id, { jahr: 2028, bundesland: 'NW', arbeitstage_pro_woche: 5 }]);
+  let e = (await umfrageVon(chef, id)).einstellungen;
+  assert.deepEqual([e.jahr, e.bundesland, e.arbeitstage_pro_woche], [2028, 'NW', 5]);
+  await alsChef('select public.org_umfrage_speichern($1, $2)', [id, { jahr: 2027, bundesland: 'BY', arbeitstage_pro_woche: 6 }]);
+  await alsChef('select public.org_mitarbeiter_anlegen($1, $2)', [id, 'Paul']);
+  const code = (await db.query("select code from urlaub.mitarbeiter where umfrage_id = $1 and name = 'Paul'", [id])).rows[0].code;
+  await browser(db, 'select public.urlaub_speichern($1, $2::int[])', [code, [10, 11, 12]]);
+  e = (await umfrageVon(chef, id)).einstellungen;
+  assert.equal(e.grunddaten_aenderbar, false);
+  await assert.rejects(alsChef('select public.org_umfrage_speichern($1, $2)', [id, { jahr: 2028 }]), /GRUNDDATEN_GESPERRT/);
+  await alsChef('select public.org_umfrage_speichern($1, $2)', [id, { jahr: 2027, bundesland: 'BY' }]); // unverändert: erlaubt
+  await alsChef('select public.org_umfrage_speichern($1, $2)', [id, { max_am_stueck: 2 }]);
+  const p = (await umfrageVon(chef, id)).mitarbeiter[0];
+  assert.deepEqual(p.wochen, [10, 11, 12]);
+  assert.equal(p.urlaubstage, 17);
+  assert.equal(p.regelverstoss, 'ZU_VIELE_AM_STUECK');
+});
+
+test('Freie Tage hinzufügen und entfernen', async () => {
+  const id = await neueUmfrage(chef);
+  await alsChef('select public.org_freien_tag_hinzufuegen($1, $2, $3)', [id, '2027-08-08', 'Augsburger Friedensfest']);
+  await alsChef('select public.org_freien_tag_hinzufuegen($1, $2, $3)', [id, '2027-08-09', 'Betriebsruhe']);
+  let u = await umfrageVon(chef, id);
+  assert.deepEqual(u.freie_tage, [{ datum: '2027-08-08', name: 'Augsburger Friedensfest' }, { datum: '2027-08-09', name: 'Betriebsruhe' }]);
+  assert.equal(u.kalender[31].arbeitstage, 5);
+  await alsChef('select public.org_freien_tag_entfernen($1, $2)', [id, '2027-08-09']);
+  u = await umfrageVon(chef, id);
+  assert.equal(u.freie_tage.length, 1);
+  assert.equal(u.kalender[31].arbeitstage, 6);
+  await assert.rejects(alsChef('select public.org_freien_tag_hinzufuegen($1, $2, $3)', [id, '2028-01-02', 'x']), /DATUM_FALSCHES_JAHR/);
+  await assert.rejects(alsChef('select public.org_freien_tag_hinzufuegen($1, $2, $3)', [id, '2027-03-03', ' ']), /NAME_LEER/);
+});
+
+test('Link erneuern und Mitarbeiter löschen', async () => {
+  const id = await neueUmfrage(chef);
+  await alsChef('select public.org_mitarbeiter_anlegen($1, $2)', [id, 'Lisa']);
+  const vorher = (await db.query('select id, code from urlaub.mitarbeiter where umfrage_id = $1', [id])).rows[0];
+  await alsChef('select public.org_link_erneuern($1)', [vorher.id]);
   const nachher = (await db.query('select code from urlaub.mitarbeiter where id = $1', [vorher.id])).rows[0].code;
   assert.notEqual(nachher, vorher.code);
-  assert.match(nachher, /^[0-9a-f]{32}$/);
-  await assert.rejects(als('anon', null, 'select public.urlaub_laden($1)', [vorher.code]), /LINK_UNGUELTIG/);
-  const r = await als('anon', null, 'select public.urlaub_laden($1) as r', [nachher]);
-  assert.deepEqual(r[0].r.wochen, [1, 30]);
+  await assert.rejects(browser(db, 'select public.urlaub_laden($1)', [vorher.code]), /LINK_UNGUELTIG/);
+  await alsChef('select public.org_mitarbeiter_loeschen($1)', [vorher.id]);
+  assert.deepEqual((await umfrageVon(chef, id)).mitarbeiter, []);
 });
 
-test('Einstellungen speichern: Frist wird als deutsche Zeit gelesen', async () => {
-  await admin('select public.admin_einstellungen_speichern($1, $2)', ['2026-12-15T18:00', ' Inventur im Dezember. ']);
-  const e = (await uebersicht()).einstellungen;
-  assert.equal(e.frist_eingabe, '2026-12-15T18:00');
-  assert.equal(e.dezember_hinweis, 'Inventur im Dezember.');
-  const utc = (await db.query("select to_char(frist at time zone 'UTC', 'YYYY-MM-DD HH24:MI') as t from urlaub.einstellungen")).rows[0].t;
-  assert.equal(utc, '2026-12-15 17:00');
-  await assert.rejects(admin('select public.admin_einstellungen_speichern($1, $2)', ['2026-12-15T18:00', '']), /HINWEIS_LEER/);
-  await assert.rejects(admin('select public.admin_einstellungen_speichern($1, $2)', ['', 'x']), /FRIST_LEER/);
-  await assert.rejects(admin('select public.admin_einstellungen_speichern($1, $2)', [null, 'x']), /FRIST_LEER/);
-  await assert.rejects(admin('select public.admin_einstellungen_speichern($1, $2)', ['kein Datum', 'x']));
+test('Trennung: Eva sieht und ändert nichts von Chef', async () => {
+  const id = await neueUmfrage(chef, 'Geheim');
+  await alsChef('select public.org_mitarbeiter_anlegen($1, $2)', [id, 'Max']);
+  const m = (await db.query('select id from urlaub.mitarbeiter where umfrage_id = $1', [id])).rows[0].id;
+  const verboten = [
+    ['select public.org_umfrage($1)', [id], /UMFRAGE_NICHT_GEFUNDEN/],
+    ['select public.org_umfrage_speichern($1, $2)', [id, { titel: 'gehackt' }], /UMFRAGE_NICHT_GEFUNDEN/],
+    ['select public.org_umfrage_loeschen($1)', [id], /UMFRAGE_NICHT_GEFUNDEN/],
+    ['select public.org_mitarbeiter_anlegen($1, $2)', [id, 'Eve'], /UMFRAGE_NICHT_GEFUNDEN/],
+    ['select public.org_freien_tag_hinzufuegen($1, $2, $3)', [id, '2027-05-05', 'x'], /UMFRAGE_NICHT_GEFUNDEN/],
+    ['select public.org_freien_tag_entfernen($1, $2)', [id, '2027-05-05'], /UMFRAGE_NICHT_GEFUNDEN/],
+    ['select public.org_mitarbeiter_loeschen($1)', [m], /MITARBEITER_NICHT_GEFUNDEN/],
+    ['select public.org_link_erneuern($1)', [m], /MITARBEITER_NICHT_GEFUNDEN/],
+    ['select public.org_umfrage($1)', [999999], /UMFRAGE_NICHT_GEFUNDEN/],
+  ];
+  for (const [sql, params, fehler] of verboten) {
+    await assert.rejects(alsEva(sql, params), fehler, sql);
+  }
+  const evasListe = (await alsEva('select public.org_umfragen() as r')).r;
+  assert.ok(!evasListe.some((x) => x.id === Number(id)));
+  const u = await umfrageVon(chef, id);
+  assert.equal(u.einstellungen.titel, 'Geheim');
+  assert.equal(u.mitarbeiter.length, 1);
 });
 
-test('Nur Hinweis ändern lässt die Frist sekundengenau unverändert', async () => {
-  await db.exec("update urlaub.einstellungen set frist = '2026-11-30 23:59:59 Europe/Berlin'");
-  await admin('select public.admin_einstellungen_speichern($1, $2)', ['2026-11-30T23:59', 'Neuer Hinweis']);
-  const t = (await db.query("select to_char(frist at time zone 'Europe/Berlin', 'YYYY-MM-DD HH24:MI:SS') as t from urlaub.einstellungen")).rows[0].t;
-  assert.equal(t, '2026-11-30 23:59:59');
+test('Umfrage löschen entfernt Mitarbeiter und Abgaben', async () => {
+  const id = await neueUmfrage(eva, 'Weg');
+  await alsEva('select public.org_mitarbeiter_anlegen($1, $2)', [id, 'Tom']);
+  const code = (await db.query('select code from urlaub.mitarbeiter where umfrage_id = $1', [id])).rows[0].code;
+  await browser(db, 'select public.urlaub_speichern($1, $2::int[])', [code, [5]]);
+  await alsEva('select public.org_umfrage_loeschen($1)', [id]);
+  await assert.rejects(browser(db, 'select public.urlaub_laden($1)', [code]), /LINK_UNGUELTIG/);
+  const n = (await db.query('select count(*)::int as n from urlaub.mitarbeiter where umfrage_id = $1', [id])).rows[0].n;
+  assert.equal(n, 0);
 });
 
-test('Mitarbeiter löschen entfernt auch die Abgabe', async () => {
-  const id = (await db.query("select id from urlaub.mitarbeiter where name = 'Anna'")).rows[0].id;
-  await admin('select public.admin_mitarbeiter_loeschen($1)', [id]);
-  assert.deepEqual((await uebersicht()).mitarbeiter.map((m) => m.name), ['Zoe']);
-  const rest = (await db.query('select count(*)::int as n from urlaub.abgaben where mitarbeiter_id = $1', [id])).rows[0].n;
-  assert.equal(rest, 0);
-});
-
-test('Angemeldeter Nutzer, der nicht auf der Admin-Liste steht, wird abgewiesen', async () => {
-  for (const sql of ['select public.admin_uebersicht()',
-                     "select public.admin_mitarbeiter_anlegen('Eve')",
-                     'select public.admin_mitarbeiter_loeschen(1)',
-                     'select public.admin_link_erneuern(1)',
-                     "select public.admin_einstellungen_speichern('2030-01-01T00:00', 'x')"]) {
-    await assert.rejects(als('authenticated', FREMD, sql), /KEIN_ADMIN/, sql);
-    await assert.rejects(als('authenticated', null, sql), /KEIN_ADMIN/, sql);
+test('Gesperrte, unbekannte und nicht angemeldete Nutzer', async () => {
+  const gesperrt = await organisator(db, 'gesperrt', { gesperrt: true });
+  await assert.rejects(als(db, 'authenticated', gesperrt, 'select public.org_umfragen()'), /KEIN_ZUGRIFF/);
+  await assert.rejects(als(db, 'authenticated', '33333333-3333-3333-3333-333333333333', 'select public.org_ich()'), /KEIN_ZUGRIFF/);
+  await assert.rejects(als(db, 'authenticated', null, 'select public.org_ich()'), /KEIN_ZUGRIFF/);
+  for (const sql of ['select public.org_ich()', 'select public.org_umfragen()',
+                     "select public.org_umfrage_anlegen('x', 2027, 'BY')", 'select public.org_umfrage(1)']) {
+    await assert.rejects(browser(db, sql), /permission denied/, sql);
   }
 });
 
-test('Browser-Schlüssel ohne Anmeldung darf keine Admin-Funktion aufrufen', async () => {
-  for (const sql of ['select public.admin_uebersicht()',
-                     "select public.admin_mitarbeiter_anlegen('Eve')",
-                     'select public.admin_link_erneuern(1)']) {
-    await assert.rejects(als('anon', null, sql), /permission denied/, sql);
+test('Organisator kann Tabellen nicht direkt lesen', async () => {
+  for (const t of ['umfragen', 'mitarbeiter', 'organisatoren', 'einladungen']) {
+    await assert.rejects(als(db, 'authenticated', chef, `select * from urlaub.${t}`), /permission denied/, t);
   }
-  // auch nicht mit gefälschter Nutzer-ID in den Angaben
-  await assert.rejects(als('anon', ADMIN, 'select public.admin_uebersicht()'), /permission denied/);
-});
-
-test('Admin kann Tabellen nicht direkt lesen, nur über die Funktionen', async () => {
-  await assert.rejects(admin('select * from urlaub.mitarbeiter'), /permission denied/);
-  await assert.rejects(admin('select * from urlaub.admins'), /permission denied/);
-  await assert.rejects(admin("insert into urlaub.admins (user_id) values ('33333333-3333-3333-3333-333333333333')"), /permission denied/);
 });
