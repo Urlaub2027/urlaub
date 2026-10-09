@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   istLeer, sichtbareFragen, antwortenZumAbsenden, antwortText, fehlerText, regelHinweis,
 } from '../docs/formular-logik.js';
-import { antwortSchluessel, mitarbeiterSicht } from '../docs/formular-logik.js';
+import {
+  antwortSchluessel, mitarbeiterSicht, tabZustand, naechsterTab, ersterTabMitFehler,
+} from '../docs/formular-logik.js';
 
 const fragen = [
   { id: 1, typ: 'janein', bedingungen: [], verknuepfung: 'und', optionen: [], regeln: {} },
@@ -181,4 +183,34 @@ test('Urlaubswochen mit einzelnen Tagen: Text, Schlüssel, Hinweis, Vorschau', (
     urlaubswochen: { jahr: 2027, kalender: [], freie_tage: [{ datum: '2027-05-17', name: 'Pfingstmontag' }] } }]);
   assert.deepEqual(sicht[0].regeln, { einzeltage: null });
   assert.deepEqual(sicht[0].urlaubswochen.freie_tage, [{ datum: '2027-05-17', name: 'Pfingstmontag' }]);
+});
+
+test('Tabs: welche es gibt, gesperrt, hervorgehoben', () => {
+  const basis = { hatEinzeltage: true, hatZusatz: true, wochenVoll: false, rest: 3, anzahlTage: 0 };
+  const ids = (t) => t.map((x) => x.id);
+  assert.deepEqual(ids(tabZustand(basis)), ['wochen', 'tage', 'zusatz']);
+  assert.deepEqual(ids(tabZustand({ ...basis, hatEinzeltage: false })), ['wochen', 'zusatz']);
+  assert.deepEqual(ids(tabZustand({ ...basis, hatZusatz: false })), ['wochen', 'tage']);
+  assert.deepEqual(tabZustand(basis).map((x) => x.titel), ['Urlaubswochen', 'Einzelne Tage', 'Zusatzfragen']);
+  const tage = (e) => tabZustand({ ...basis, ...e })[1];
+  assert.deepEqual([tage({}).gesperrt, tage({}).hervorgehoben, tage({}).abzeichen], [true, false, '']);
+  assert.deepEqual([tage({ wochenVoll: true }).gesperrt, tage({ wochenVoll: true }).hervorgehoben,
+    tage({ wochenVoll: true }).abzeichen], [false, true, '3 übrig']);
+  // Alles verplant, aber Tage gewählt: frei, nicht hervorgehoben.
+  const verplant = tage({ wochenVoll: true, rest: 0, anzahlTage: 3 });
+  assert.deepEqual([verplant.gesperrt, verplant.hervorgehoben, verplant.abzeichen], [false, false, '']);
+  // Keine Tage übrig und keine gewählt (Wochen ohne Feiertage): gesperrt.
+  assert.equal(tage({ wochenVoll: true, rest: 0, anzahlTage: 0 }).gesperrt, true);
+});
+
+test('Tabs: Weiter-Ziel und Fehler-Tab', () => {
+  const t = (e) => tabZustand({ hatEinzeltage: true, hatZusatz: true, wochenVoll: false, rest: 3, anzahlTage: 0, ...e });
+  assert.equal(naechsterTab(t({}), 'wochen'), 'zusatz');             // Tage gesperrt → überspringen
+  assert.equal(naechsterTab(t({ wochenVoll: true }), 'wochen'), 'tage');
+  assert.equal(naechsterTab(t({ wochenVoll: true }), 'tage'), 'zusatz');
+  assert.equal(naechsterTab(t({}), 'zusatz'), null);
+  assert.equal(naechsterTab(tabZustand({ hatEinzeltage: false, hatZusatz: false, wochenVoll: true, rest: 0, anzahlTage: 0 }), 'wochen'), null);
+  assert.equal(ersterTabMitFehler(t({}), new Set(['zusatz', 'wochen'])), 'wochen');
+  assert.equal(ersterTabMitFehler(t({}), new Set(['zusatz'])), 'zusatz');
+  assert.equal(ersterTabMitFehler(t({}), new Set()), null);
 });

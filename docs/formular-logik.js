@@ -259,3 +259,28 @@ export function mitarbeiterSicht(fragen, kalender) {
     };
   });
 }
+
+// ---------------------------------------------------------------- Tabs
+// Tabs des Formulars bei Umfragen mit Urlaubswochen-Frage (Reihenfolge fest).
+export function tabZustand({ hatEinzeltage, hatZusatz, wochenVoll, rest, anzahlTage }) {
+  const tabs = [{ id: 'wochen', titel: 'Urlaubswochen', gesperrt: false, hervorgehoben: false, abzeichen: '' }];
+  if (hatEinzeltage) {
+    const frei = wochenVoll && (rest > 0 || anzahlTage > 0);
+    const offen = frei && rest > 0;
+    tabs.push({ id: 'tage', titel: 'Einzelne Tage', gesperrt: !frei, hervorgehoben: offen,
+      abzeichen: offen ? `${rest} übrig` : '' });
+  }
+  if (hatZusatz) tabs.push({ id: 'zusatz', titel: 'Zusatzfragen', gesperrt: false, hervorgehoben: false, abzeichen: '' });
+  return tabs;
+}
+
+// Nächster nicht gesperrter Tab nach `aktuell`, sonst null.
+export function naechsterTab(tabs, aktuell) {
+  const i = tabs.findIndex((t) => t.id === aktuell);
+  return tabs.slice(i + 1).find((t) => !t.gesperrt)?.id ?? null;
+}
+
+// Erster Tab (in Tab-Reihenfolge), der in `tabMitFehler` (Set von Tab-IDs) steht, sonst null.
+export function ersterTabMitFehler(tabs, tabMitFehler) {
+  return tabs.find((t) => tabMitFehler.has(t.id))?.id ?? null;
+}
