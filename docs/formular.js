@@ -252,12 +252,14 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       }
       // Offene Monate und Fokus merken: Die Liste wird neu gebaut, soll aber nicht springen.
       const offen = new Set([...tageMonate.querySelectorAll('details[open]')].map((d) => d.dataset.monat));
+      const erstes = tageMonate.children.length === 0;
       const fokus = tageMonate.contains(document.activeElement) ? document.activeElement.value : null;
       tageMonate.replaceChildren(...[...gruppen].map(([monat, liste]) => {
         const auf = document.createElement('details');
         auf.className = 'monat';
         auf.dataset.monat = String(monat);
-        auf.open = offen.has(String(monat)) || liste.some((t) => tage.includes(t.datum));
+        // Beim ersten Zeichnen öffnen Monate mit gewähltem Tag; danach gilt nur, was der Nutzer offen gelassen hat.
+        auf.open = offen.has(String(monat)) || (erstes && liste.some((t) => tage.includes(t.datum)));
         auf.append(el('summary', null, MONATE[monat - 1]));
         for (const t of liste) {
           const zeile = el('label', 'woche');

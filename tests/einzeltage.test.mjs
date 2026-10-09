@@ -97,3 +97,20 @@ test('Verwaltung sieht Verstoß, wenn einzeltage nachträglich ausgeschaltet wir
      where a.frage_id = $1`, [u.bau.ids.urlaub])).rows[0].code;
   assert.equal(v, 'UNGUELTIGER_TAG');
 });
+
+test('5-Tage-Woche (Mo–Fr): Samstag ungültig, Freitag vor dem Block gesperrt, Donnerstag erlaubt', async () => {
+  const u = await umfrageMit();
+  await db.query("update urlaub.fragen set arbeitstage_pro_woche = 5 where id = $1", [u.bau.ids.urlaub]);
+  const kal = (await db.query('select kw, arbeitstage from urlaub.kalender($1)', [u.bau.umfrageId])).rows;
+  const wochen = [10, 11, 15, 30, 31, 32];
+  const summe = wochen.reduce((s, kw) => s + kal.find((k) => k.kw === kw).arbeitstage, 0);
+  assert.ok(summe <= 35, `Summe ${summe} lässt keinen Platz für einen Tag`);   // max_urlaubstage 36
+  assert.equal(await u.fehler([...wochen, '2027-08-21']), 'UNGUELTIGER_TAG');           // Samstag
+  assert.equal(await u.fehler([...wochen, '2027-07-23']), 'TAG_ZU_VIELE_AM_STUECK');    // Fr, Sa/So frei
+  await u.absenden([...wochen, '2027-07-22']);                                          // Do: Fr wird gearbeitet
+});
+
+test('Ungültiges Datum wird vor den Wochenprüfungen gemeldet', async () => {
+  const u = await umfrageMit();
+  assert.equal(await u.fehler([55, '2027-02-30']), 'UNGUELTIGER_TAG');
+});

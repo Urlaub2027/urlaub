@@ -189,3 +189,10 @@ test('Hinweise und Zähler mit Tagen', () => {
   assert.equal(fehlertext('UNGUELTIGER_TAG'), 'Mindestens ein gewählter Tag ist nicht wählbar.');
   assert.equal(fehlertext('DOPPELTER_TAG'), 'Ein Tag wurde doppelt gewählt.');
 });
+
+test('5-Tage-Woche: Freitag vor dem Block gesperrt, Donnerstag frei, kein Samstag wählbar', () => {
+  const c = tageKontext({ kalender: kal.map((k) => ({ ...k, arbeitstage: 5 })), arbeitstage_pro_woche: 5, freie_tage: [] });
+  assert.ok(tagSperrgrund(c, '2027-07-23', BLOCK, [], 3));
+  assert.equal(tagSperrgrund(c, '2027-07-22', BLOCK, [], 3), null);
+  assert.ok(!waehlbareTage(c, BLOCK).some((x) => wochentag(x.datum) >= 6));
+});
