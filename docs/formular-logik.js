@@ -11,7 +11,7 @@
 // Prüfung bestanden haben; hier zählt jede nicht leere Antwort. Dadurch zeigt der
 // Browser höchstens mehr Fragen als die Datenbank, nie weniger – eine Frage, an der
 // die Datenbank einen Fehler meldet, ist also im Browser immer sichtbar.
-import { fehlertext } from './logik.js';
+import { fehlertext, wochenAus, tageAus, tagKurz, einzeltageAn } from './logik.js';
 
 const ZAHL = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 10 });
 
@@ -88,13 +88,20 @@ export function antwortenZumAbsenden(fragen, antworten) {
   return aus;
 }
 
+// Gemischte Listen (KW-Zahlen, Tage als Text): Zahlen zuerst, dann Texte aufsteigend.
+const vergleiche = (x, y) => {
+  if (typeof x !== typeof y) return typeof x === 'number' ? -1 : 1;
+  if (typeof x === 'number') return x - y;
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+
 // Vergleichsschlüssel: gleiche Abgabe ⇔ gleicher Text (Listen sortiert, Texte getrimmt,
 // wie urlaub.antwort_normalisiert).
 export function antwortSchluessel(fragen, antworten) {
   const a = antwortenZumAbsenden(fragen, antworten);
   return JSON.stringify(Object.entries(a).map(([id, wert]) => {
     let w = wert;
-    if (Array.isArray(w)) w = [...w].sort((x, y) => Number(x) - Number(y));
+    if (Array.isArray(w)) w = [...w].sort(vergleiche);
     else if (typeof w === 'string') w = w.trim();
     return [id, w];
   }));
@@ -119,7 +126,12 @@ export function antwortText(frage, wert) {
     case 'skala':
     case 'zahl': return typeof wert === 'number' ? zahlText(wert) : String(wert);
     case 'datum': return datumText(wert);
-    case 'urlaubswochen': return (Array.isArray(wert) ? wert : [wert]).map((kw) => `KW ${kw}`).join(', ');
+    case 'urlaubswochen': {
+      const liste = Array.isArray(wert) ? wert : [wert];
+      const kws = wochenAus(liste).map((kw) => `KW ${kw}`).join(', ');
+      const tage = tageAus(liste).map(tagKurz).join(', ');
+      return kws && tage ? `${kws} · ${tage}` : kws || tage;
+    }
     default: return String(wert);
   }
 }
@@ -136,7 +148,8 @@ const FEHLER = {
   DATUM_ZU_SPAET: 'Das Datum ist zu spät.',
 };
 const WOCHEN_FEHLER = ['UNGUELTIGE_WOCHE', 'DOPPELTE_WOCHE', 'ZU_WENIGE_WOCHEN', 'ZU_VIELE_WOCHEN',
-  'ZU_VIELE_AM_STUECK', 'ZU_VIELE_TAGE'];
+  'ZU_VIELE_AM_STUECK', 'ZU_VIELE_TAGE', 'UNGUELTIGER_TAG', 'DOPPELTER_TAG', 'TAGE_ERST_NACH_WOCHEN',
+  'TAG_ZU_VIELE_AM_STUECK'];
 
 // Text zu einem Fehlercode pro Frage (aus dem details-Objekt von ANTWORTEN_UNGUELTIG).
 export function fehlerText(code, frage = null) {
@@ -164,7 +177,11 @@ function wochenHinweis(r) {
     teile.push(teile.length ? `insgesamt höchstens ${r.max_urlaubstage} Urlaubstage`
       : `Höchstens ${r.max_urlaubstage} Urlaubstage`);
   }
-  return teile.length ? `${teile.join(', ')}.` : '';
+  const satz = teile.length ? `${teile.join(', ')}.` : '';
+  if (einzeltageAn(r) && hat(r, 'max_wochen') && hat(r, 'max_urlaubstage')) {
+    return `${satz} Übrige Urlaubstage danach als einzelne Tage.`.trim();
+  }
+  return satz;
 }
 
 function bereich(min, max, beide, nurMin, nurMax) {
@@ -236,6 +253,7 @@ export function mitarbeiterSicht(fragen, kalender) {
         bundesland: uw.bundesland,
         arbeitstage_pro_woche: uw.arbeitstage_pro_woche,
         sperr_hinweis: uw.sperr_hinweis,
+        freie_tage: uw.freie_tage || [],
         kalender: Array.isArray(kalender) && kalender.length ? kalender : (uw.kalender || []),
       } : null,
     };
