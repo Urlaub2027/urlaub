@@ -113,7 +113,7 @@ create table if not exists urlaub.regeln (
   frage_id bigint not null references urlaub.fragen (id) on delete cascade,
   art      text not null check (art in ('pflicht', 'min_anzahl', 'max_anzahl', 'max_zeichen', 'min_zahl', 'max_zahl',
                                         'fruehestens', 'spaetestens', 'min_wochen', 'max_wochen', 'max_am_stueck',
-                                        'max_urlaubstage', 'gesperrte_monate', 'gesperrte_wochen')),
+                                        'max_urlaubstage', 'einzeltage', 'gesperrte_monate', 'gesperrte_wochen')),
   wert     jsonb not null default 'null',
   aktiv    boolean not null default true,
   unique (frage_id, art)
@@ -122,7 +122,7 @@ create table if not exists urlaub.regeln (
 alter table urlaub.regeln drop constraint if exists regeln_art_check;
 alter table urlaub.regeln add constraint regeln_art_check check (art in (
   'pflicht', 'min_anzahl', 'max_anzahl', 'max_zeichen', 'min_zahl', 'max_zahl', 'fruehestens', 'spaetestens',
-  'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage', 'gesperrte_monate', 'gesperrte_wochen'));
+  'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage', 'einzeltage', 'gesperrte_monate', 'gesperrte_wochen'));
 
 -- Sichtbarkeits-Bedingung: frage_id = Zielfrage, quelle_id = frühere Frage.
 -- quelle_id ohne "on delete": eine verwendete Quellfrage ist nicht löschbar.
@@ -265,6 +265,39 @@ as $$
   select f.* from urlaub.fragen f where f.umfrage_id = p_umfrage_id and f.typ = 'urlaubswochen'
 $$;
 
+-- Feiertage des Bundeslands (Vorjahr bis Folgejahr, damit KW 1 und die letzte KW stimmen)
+-- und freie Tage der Umfrage. Ohne Urlaubswochen-Frage nur die freien Tage.
+create or replace function urlaub.frei(p_umfrage_id bigint)
+returns table (datum date, name text)
+language sql stable
+set search_path = ''
+as $$
+  select l.datum, l.name
+  from urlaub.fragen f, generate_series(f.jahr - 1, f.jahr + 1) j (jahr), urlaub.landesfeiertage(j.jahr, f.bundesland) l
+  where f.umfrage_id = p_umfrage_id and f.typ = 'urlaubswochen'
+  union
+  select fr.datum, fr.name from urlaub.freie_tage fr where fr.umfrage_id = p_umfrage_id
+$$;
+
+-- JSON-Text im Format YYYY-MM-DD mit gültigem Datum (einzelner Urlaubstag).
+create or replace function urlaub.ist_datumstext(p_e jsonb)
+returns boolean
+language plpgsql immutable
+set search_path = ''
+as $$
+declare
+  v_datum date;
+begin
+  if jsonb_typeof(p_e) is distinct from 'string' or (p_e #>> '{}') !~ '^\d{4}-\d{2}-\d{2}$' then
+    return false;
+  end if;
+  v_datum := (p_e #>> '{}')::date;
+  return true;
+exception when data_exception then
+  return false;
+end;
+$$;
+
 -- Kalenderwochen der Urlaubswochen-Frage nach ISO 8601. Eine Woche gehört zum Monat ihres
 -- Donnerstags. Gesperrt ist ein Monat nur, wenn die Regel "gesperrte_monate" eingeschaltet ist.
 create or replace function urlaub.kalender(p_umfrage_id bigint)
@@ -290,10 +323,7 @@ as $$
     from f
   ),
   frei as (
-    select l.datum, l.name from u, generate_series(u.jahr - 1, u.jahr + 1) j (jahr),
-         urlaub.landesfeiertage(j.jahr, u.bundesland) l
-    union
-    select fr.datum, fr.name from urlaub.freie_tage fr where fr.umfrage_id = p_umfrage_id
+    select fr.datum, fr.name from urlaub.frei(p_umfrage_id) fr
   ),
   w as (
     select u.arbeitstage_pro_woche, u.gesperrte_monate, u.gesperrte_wochen, g.kw, u.montag1 + (g.kw - 1) * 7 as montag
@@ -321,6 +351,7 @@ as $$
            'kw',          k.kw,
            'von',         to_char(k.montag,  'DD.MM.'),
            'bis',         to_char(k.sonntag, 'DD.MM.'),
+           'montag',      to_char(k.montag, 'YYYY-MM-DD'),
            'monat',       k.monat,
            'arbeitstage', k.arbeitstage,
            'feiertag',    k.feiertag,
@@ -493,6 +524,29 @@ begin
 end;
 $$;
 
+-- Urlaubswochen-Antwort: Zahlen = KWs, Texte "YYYY-MM-DD" = einzelne Tage.
+-- Nur über diese beiden Funktionen lesen. antwort_tage erst nach der Formprüfung
+-- aufrufen (wochen_verstoss / antwort_form_ok), sonst scheitert ::date.
+create or replace function urlaub.antwort_wochen(p_wert jsonb)
+returns int[]
+language sql immutable
+set search_path = ''
+as $$
+  select coalesce(array_agg(((e #>> '{}')::numeric)::int order by (e #>> '{}')::numeric), '{}'::int[])
+  from jsonb_array_elements(case when jsonb_typeof(p_wert) = 'array' then p_wert else '[]'::jsonb end) e
+  where jsonb_typeof(e) = 'number'
+$$;
+
+create or replace function urlaub.antwort_tage(p_wert jsonb)
+returns date[]
+language sql immutable
+set search_path = ''
+as $$
+  select coalesce(array_agg((e #>> '{}')::date order by (e #>> '{}')), '{}'::date[])
+  from jsonb_array_elements(case when jsonb_typeof(p_wert) = 'array' then p_wert else '[]'::jsonb end) e
+  where jsonb_typeof(e) = 'string'
+$$;
+
 -- Wochenregeln der Urlaubswochen-Frage; nur eingeschaltete Regeln zählen.
 create or replace function urlaub.wochen_verstoss(p_frage urlaub.fragen, p_wochen jsonb)
 returns text
@@ -648,7 +702,14 @@ language sql immutable
 set search_path = ''
 as $$
   select case
-    when p_frage.typ in ('urlaubswochen', 'mehrfach') then
+    when p_frage.typ = 'urlaubswochen' then
+      (select coalesce(jsonb_agg(x order by s, n, t), '[]'::jsonb)
+       from (select to_jsonb(((e #>> '{}')::numeric)::bigint) as x, 0 as s, (e #>> '{}')::numeric as n, null::text as t
+             from jsonb_array_elements(p_wert) e where jsonb_typeof(e) = 'number'
+             union all
+             select e, 1, null, e #>> '{}'
+             from jsonb_array_elements(p_wert) e where jsonb_typeof(e) = 'string') a)
+    when p_frage.typ = 'mehrfach' then
       (select jsonb_agg(to_jsonb(((e #>> '{}')::numeric)::bigint) order by (e #>> '{}')::numeric)
        from jsonb_array_elements(p_wert) e)
     when p_frage.typ = 'einfach' then to_jsonb(((p_wert #>> '{}')::numeric)::bigint)
@@ -676,16 +737,26 @@ begin
     if v_typ is distinct from 'array' or jsonb_array_length(p_wert) = 0 then
       return false;
     end if;
+    if p_frage.typ = 'urlaubswochen' then
+      if exists (select 1 from jsonb_array_elements(p_wert) e
+                 where not (jsonb_typeof(e) = 'number' or urlaub.ist_datumstext(e))) then
+        return false;
+      end if;
+      if (select count(distinct e) from jsonb_array_elements(p_wert) e where jsonb_typeof(e) = 'string')
+         + (select count(distinct (e #>> '{}')::numeric) from jsonb_array_elements(p_wert) e where jsonb_typeof(e) = 'number')
+         <> jsonb_array_length(p_wert) then
+        return false;
+      end if;
+      return not exists (select 1 from jsonb_array_elements(p_wert) e
+                         where jsonb_typeof(e) = 'number'
+                           and ((e #>> '{}')::numeric <> trunc((e #>> '{}')::numeric)
+                                or (e #>> '{}')::numeric not between 1 and 53));
+    end if;
     if exists (select 1 from jsonb_array_elements(p_wert) e where jsonb_typeof(e) <> 'number') then
       return false;
     end if;
     if (select count(distinct (e #>> '{}')::numeric) from jsonb_array_elements(p_wert) e) <> jsonb_array_length(p_wert) then
       return false;
-    end if;
-    if p_frage.typ = 'urlaubswochen' then
-      return not exists (select 1 from jsonb_array_elements(p_wert) e
-                         where (e #>> '{}')::numeric <> trunc((e #>> '{}')::numeric)
-                            or (e #>> '{}')::numeric not between 1 and 53);
     end if;
     return not exists (select 1 from jsonb_array_elements(p_wert) e
                        where not exists (select 1 from urlaub.optionen o
@@ -818,7 +889,13 @@ as $$
     'urlaubswochen', case when p_f.typ = 'urlaubswochen'
       then jsonb_build_object('jahr', p_f.jahr, 'bundesland', p_f.bundesland,
                               'arbeitstage_pro_woche', p_f.arbeitstage_pro_woche, 'sperr_hinweis', p_f.sperr_hinweis,
-                              'kalender', urlaub.kalender_json(p_f.umfrage_id)) end)
+                              'kalender', urlaub.kalender_json(p_f.umfrage_id),
+                              'freie_tage', (select coalesce(jsonb_agg(jsonb_build_object(
+                                               'datum', to_char(fr.datum, 'YYYY-MM-DD'), 'name', fr.name)
+                                               order by fr.datum, fr.name), '[]'::jsonb)
+                                             from urlaub.frei(p_f.umfrage_id) fr
+                                             where fr.datum between make_date(p_f.jahr - 1, 12, 25)
+                                                                and make_date(p_f.jahr + 1, 1, 7))) end)
   || case when p_alles
        then jsonb_build_object('aktiv', p_f.aktiv,
                                'hat_antworten', exists (select 1 from urlaub.antworten an where an.frage_id = p_f.id))
@@ -1424,7 +1501,7 @@ set search_path = ''
 as $$
   select case p_typ
     when 'urlaubswochen' then array['pflicht', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage',
-                                    'gesperrte_monate', 'gesperrte_wochen']
+                                    'einzeltage', 'gesperrte_monate', 'gesperrte_wochen']
     when 'einfach'       then array['pflicht']
     when 'janein'        then array['pflicht']
     when 'skala'         then array['pflicht']
@@ -1473,7 +1550,7 @@ declare
   v_zahl  numeric;
   v_datum date;
 begin
-  if p_art = 'pflicht' then
+  if p_art in ('pflicht', 'einzeltage') then
     return 'null'::jsonb;
   end if;
   if p_art in ('min_anzahl', 'max_anzahl', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage',
@@ -1912,6 +1989,18 @@ as $$
                else (ru.wert #>> '{}')::numeric > (ro.wert #>> '{}')::numeric end)
 $$;
 
+-- Einzelne Tage brauchen eingeschaltete Grenzen: "Wochen voll" und "Tage übrig" sind sonst
+-- nicht definiert.
+create or replace function urlaub.einzeltage_ohne_grenzen(p_frage_id bigint)
+returns boolean
+language sql stable
+set search_path = ''
+as $$
+  select exists (select 1 from urlaub.regeln r where r.frage_id = p_frage_id and r.art = 'einzeltage' and r.aktiv)
+     and (select count(*) from urlaub.regeln r
+          where r.frage_id = p_frage_id and r.art in ('max_wochen', 'max_urlaubstage') and r.aktiv) < 2
+$$;
+
 -- Legt die Regel an oder ändert Wert und Schalter. pflicht speichert immer null.
 -- Sind danach beide Regeln eines Paares (min/max, frühestens/spätestens) eingeschaltet
 -- und die untere größer als die obere, scheitert der ganze Aufruf (gilt auch fürs
@@ -1935,6 +2024,9 @@ begin
   on conflict (frage_id, art) do update set wert = excluded.wert, aktiv = coalesce(p_aktiv, urlaub.regeln.aktiv);
   if urlaub.regeln_widerspruch(v_f.id, p_art) then
     raise exception 'UNGUELTIGE_EINSTELLUNG';
+  end if;
+  if urlaub.einzeltage_ohne_grenzen(v_f.id) then
+    raise exception 'EINZELTAGE_OHNE_GRENZEN';
   end if;
 end;
 $$;
@@ -2150,7 +2242,7 @@ begin
       values (v_neu, v_r ->> 'art', urlaub.regelwert(v_r ->> 'art', v_r -> 'wert'),
               coalesce((v_r ->> 'aktiv')::boolean, true));
     end loop;
-    if urlaub.regeln_widerspruch(v_neu) then
+    if urlaub.regeln_widerspruch(v_neu) or urlaub.einzeltage_ohne_grenzen(v_neu) then
       raise exception 'SICHERUNG_UNGUELTIG';
     end if;
   end loop;

@@ -85,7 +85,7 @@ test('Zusätzliche freie Tage und gesperrte Monate wirken pro Umfrage', async ()
 test('kalender_json liefert Anzeigeformat', async () => {
   const id = await umfrageAnlegen(db, chef);
   const j = (await db.query('select urlaub.kalender_json($1) as j', [id])).rows[0].j;
-  assert.deepEqual(j[0], { kw: 1, von: '04.01.', bis: '10.01.', monat: 1, arbeitstage: 5,
+  assert.deepEqual(j[0], { kw: 1, von: '04.01.', bis: '10.01.', montag: '2027-01-04', monat: 1, arbeitstage: 5,
     feiertag: 'Heilige Drei Könige', gesperrt: false });
   assert.equal(j.length, 52);
 });
@@ -123,4 +123,16 @@ test('Umfrage ohne Urlaubswochen-Frage hat keinen Kalender', async () => {
   assert.equal((await kalender(r.rows[0].id)).length, 0);
   const j = (await db.query('select urlaub.kalender_json($1) as j', [r.rows[0].id])).rows[0].j;
   assert.deepEqual(j, []);
+});
+
+test('urlaub.frei: Feiertage und freie Tage der Umfrage; kalender unverändert', async () => {
+  const id = await umfrageAnlegen(db, chef);
+  await db.query("insert into urlaub.freie_tage (umfrage_id, datum, name) values ($1, '2027-08-19', 'Betriebsausflug')", [id]);
+  const frei = (await db.query('select datum::text, name from urlaub.frei($1) order by datum', [id])).rows;
+  assert.ok(frei.some((t) => t.datum === '2027-05-17' && t.name === 'Pfingstmontag'));
+  assert.ok(frei.some((t) => t.datum === '2027-08-19' && t.name === 'Betriebsausflug'));
+  assert.ok(frei.some((t) => t.datum === '2026-12-25'), 'Vorjahr enthalten');
+  const k = await kalender(id);
+  assert.equal(k.find((x) => x.kw === 33).arbeitstage, 5);
+  assert.equal(k.find((x) => x.kw === 20).arbeitstage, 5);
 });
