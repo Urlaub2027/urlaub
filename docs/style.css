@@ -285,6 +285,19 @@ button.frage-leeren {
   padding: 8px 0;
   background: var(--hintergrund);
 }
+.frage .zaehler p { margin: 0; }
+.tage-sprung {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 8px;
+  margin-top: 6px !important;
+  font-weight: 400;
+}
+/* Sprungziel nicht unter dem mitlaufenden Zähler verstecken. */
+.einzeltage { scroll-margin-top: 7rem; }
+.einzeltage h3:focus { outline: none; }
 .box-gesperrt h3 { font-size: 1rem; margin: 0 0 6px; }
 
 /* ---------------------------------------------------------------- Admin */

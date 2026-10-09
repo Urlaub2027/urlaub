@@ -218,6 +218,24 @@ export function tageBereinigen(ctx, wochen, tage, { einzeltage, maxWochen, maxTa
   return { tage: rest, grund: rest.length === tage.length ? null : 'regel' };
 }
 
+// Ziel des Knopfs „Einzelne Tage wählen“: der erste freie, nicht gesperrte Tag ab der Woche der
+// spätesten gewählten KW, sonst der erste im Jahr; null, wenn keiner mehr wählbar ist.
+export function sprungZiel(ctx, wochen, tage, maxAmStueck) {
+  const frei = waehlbareTage(ctx, wochen)
+    .map((t) => t.datum)
+    .filter((d) => !tage.includes(d) && !tagSperrgrund(ctx, d, wochen, tage, maxAmStueck));
+  const letzte = ctx.kalender.find((k) => k.kw === Math.max(...wochen))?.montag;
+  return (letzte && frei.find((d) => d >= letzte)) || frei[0] || null;
+}
+
+// Monate (1–12, aufsteigend) mit wählbaren Tagen in den Wochen direkt vor und nach gewählten
+// Wochen – dort landen Resttage meist; die Tagesliste klappt sie beim ersten Anzeigen auf.
+export function naheMonate(ctx, wochen) {
+  const nachbarn = new Set(wochen.flatMap((kw) => [kw - 1, kw + 1]).filter((kw) => !wochen.includes(kw)));
+  const monate = waehlbareTage(ctx, wochen).filter((t) => nachbarn.has(t.kw)).map((t) => Number(t.datum.slice(5, 7)));
+  return [...new Set(monate)].sort((a, b) => a - b);
+}
+
 export function hinweisEntfernt(grund, maxWochen) {
   if (grund === 'wochen') {
     return `Deine einzelnen Tage wurden entfernt, weil du nicht mehr alle ${maxWochen} Wochen gewählt hast.`;

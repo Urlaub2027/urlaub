@@ -6,7 +6,7 @@ import {
 import {
   zusammenfassung, istGesperrt, nachMonat, gesperrteZeitraeume, gesperrteGewaehlte, MONATE,
   wochenAus, tageAus, einzeltageAn, tagKurz, tageKontext, waehlbareTage, tagSperrgrund, sperrText,
-  tageBereinigen, hinweisEntfernt,
+  tageBereinigen, hinweisEntfernt, sprungZiel, naheMonate,
 } from './logik.js';
 
 function el(tag, klasse, text) {
@@ -195,8 +195,17 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
 
     const erklaerung = el('p', 'erklaerung',
       'Die Wochen müssen nicht zusammenhängen. Es sind Wünsche, keine Genehmigungen.');
-    const zaehler = el('p', 'zaehler');
-    zaehler.setAttribute('aria-live', 'polite');
+    // Zähler läuft beim Scrollen mit; die zweite Zeile führt zu den einzelnen Tagen unter dem Kalender.
+    const zaehler = el('div', 'zaehler');
+    const zaehlerText = el('p', null);
+    zaehlerText.setAttribute('aria-live', 'polite');
+    const sprung = el('p', 'tage-sprung');
+    const sprungText = el('span', null);
+    const sprungKnopf = el('button', 'klein-knopf', 'Einzelne Tage wählen ↓');
+    sprungKnopf.type = 'button';
+    sprung.append(sprungText, sprungKnopf);
+    sprung.hidden = true;
+    zaehler.append(zaehlerText, sprung);
     const monate = el('div', 'monate');
     for (const gruppe of nachMonat(kalender)) {
       const block = el('fieldset', 'monat');
@@ -227,8 +236,21 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
     const tageBox = el('section', 'box einzeltage');
     const tageText = el('p', null);
     const tageMonate = el('div', 'monate');
-    tageBox.append(el('h3', null, 'Einzelne Tage'), tageText, tageMonate);
+    const tageTitel = el('h3', null, 'Einzelne Tage');
+    tageTitel.tabIndex = -1;
+    tageBox.append(tageTitel, tageText, tageMonate);
     tageBox.hidden = true;
+
+    // Sprung: Monat des ersten passenden Tags aufklappen, hinscrollen, Fokus auf die Überschrift.
+    sprungKnopf.addEventListener('click', () => {
+      const ziel = sprungZiel(ctx, wochenVon(), tageVon(), maxAmStueck);
+      if (ziel) {
+        const monat = tageMonate.querySelector(`details[data-monat="${Number(ziel.slice(5, 7))}"]`);
+        if (monat) monat.open = true;
+      }
+      tageBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      tageTitel.focus({ preventScroll: true });
+    });
 
     const teile = [erklaerung, zaehler, hinweis, monate, tageBox];
     const bereiche = gesperrteZeitraeume(kalender);
@@ -254,12 +276,15 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       const offen = new Set([...tageMonate.querySelectorAll('details[open]')].map((d) => d.dataset.monat));
       const erstes = tageMonate.children.length === 0;
       const fokus = tageMonate.contains(document.activeElement) ? document.activeElement.value : null;
+      const nahe = erstes ? naheMonate(ctx, wochen) : [];
       tageMonate.replaceChildren(...[...gruppen].map(([monat, liste]) => {
         const auf = document.createElement('details');
         auf.className = 'monat';
         auf.dataset.monat = String(monat);
-        // Beim ersten Zeichnen öffnen Monate mit gewähltem Tag; danach gilt nur, was der Nutzer offen gelassen hat.
-        auf.open = offen.has(String(monat)) || (erstes && liste.some((t) => tage.includes(t.datum)));
+        // Beim ersten Zeichnen öffnen Monate mit gewähltem Tag oder neben gewählten Wochen;
+        // danach gilt nur, was der Nutzer offen gelassen hat.
+        auf.open = offen.has(String(monat))
+          || (erstes && (nahe.includes(monat) || liste.some((t) => tage.includes(t.datum))));
         auf.append(el('summary', null, MONATE[monat - 1]));
         for (const t of liste) {
           const zeile = el('label', 'woche');
@@ -290,7 +315,7 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       const tage = tageVon();
       const auswahl = new Set(wochen);
       const z = zusammenfassung(kalender, auswahl, maxWochen, maxTage, tage.length);
-      zaehler.textContent = z.text;
+      zaehlerText.textContent = z.text;
       for (const kaestchen of monate.querySelectorAll('input')) {
         const kw = Number(kaestchen.value);
         kaestchen.checked = auswahl.has(kw);
@@ -308,6 +333,8 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
           : 'Alle Urlaubstage sind verplant.';
         zeichneTage(wochen, tage, rest);
       }
+      sprung.hidden = tageBox.hidden || rest <= 0 || nurLesen;
+      sprungText.textContent = `Noch ${rest} ${rest === 1 ? 'Urlaubstag' : 'Urlaubstage'} übrig → `;
     }
     aktualisiere();
     return { teile, aktualisiere };
