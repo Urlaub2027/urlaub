@@ -12,7 +12,7 @@ const $ = (id) => document.getElementById(id);
 
 let code = null;
 let daten = null;         // letzte Antwort der Datenbank
-let formular = null;      // { antworten, zeigeFehler, sichtbarkeitAktualisieren }
+let formular = null;      // { antworten, zeigeFehler, sichtbarkeitAktualisieren, tabs }
 let gespeichert = '';     // Vergleichsschlüssel der gespeicherten Antworten
 
 function zeige(bereich) {
@@ -45,15 +45,22 @@ function wochenText(f, kw) {
 }
 
 function baue(nurLesen, antworten = daten.antworten) {
-  formular = baueFormular($('fragen'), { ...daten, antworten }, { nurLesen, beiAenderung: aktualisiere });
+  formular = baueFormular($('fragen'), { ...daten, antworten },
+    { nurLesen, beiAenderung: aktualisiere, beiTabwechsel: aktualisiere });
+}
+
+// Mit Tabs führt der Leistenknopf Schritt für Schritt: "Weiter →" bis zum letzten erreichbaren Tab.
+function weiterStattAbsenden() {
+  return Boolean(formular?.tabs) && daten.offen && !formular.tabs.istLetzter();
 }
 
 function aktualisiere() {
+  const weiter = weiterStattAbsenden();
   // Ohne bisherige Abgabe darf auch "leer" abgesendet werden (die Datenbank meldet Pflichtfragen).
   const unveraendert = Boolean(daten.geaendert_am)
     && antwortSchluessel(daten.fragen, formular.antworten()) === gespeichert;
-  $('absenden').disabled = !daten.offen || unveraendert;
-  $('absenden').textContent = daten.geaendert_am ? 'Änderung speichern' : 'Antworten absenden';
+  $('absenden').disabled = weiter ? false : (!daten.offen || unveraendert);
+  $('absenden').textContent = weiter ? 'Weiter →' : (daten.geaendert_am ? 'Änderung speichern' : 'Antworten absenden');
   $('meldung').hidden = true;
 }
 
@@ -184,7 +191,7 @@ async function absenden() {
 }
 
 async function start() {
-  $('absenden').addEventListener('click', absenden);
+  $('absenden').addEventListener('click', () => (weiterStattAbsenden() ? formular.tabs.weiter() : absenden()));
   $('aendern').addEventListener('click', zeigeFormular);
   code = codeAusLink(window.location.hash);
   if (!code) return zeigeFehlerSeite('LINK_UNGUELTIG');

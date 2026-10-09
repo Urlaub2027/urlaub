@@ -1,12 +1,12 @@
 // Baut das Fragen-Formular der Mitarbeiter-Seite (nur DOM, nur textContent).
 // Die Logik (Sichtbarkeit, Texte) steckt in formular-logik.js.
 import {
-  sichtbareFragen, fehlerText, regelHinweis, istPflicht, istLeer,
+  sichtbareFragen, fehlerText, regelHinweis, istPflicht, istLeer, tabZustand, naechsterTab, ersterTabMitFehler,
 } from './formular-logik.js';
 import {
   zusammenfassung, istGesperrt, nachMonat, gesperrteZeitraeume, gesperrteGewaehlte, MONATE,
   wochenAus, tageAus, einzeltageAn, tagKurz, tageKontext, waehlbareTage, tagSperrgrund, sperrText,
-  tageBereinigen, hinweisEntfernt, sprungZiel, naheMonate,
+  tageBereinigen, hinweisEntfernt,
 } from './logik.js';
 
 function el(tag, klasse, text) {
@@ -30,10 +30,16 @@ function wahlZeile(typ, name, wert, text, klasse = 'wahl') {
   return { zeile, eingabe };
 }
 
-export function baueFormular(container, daten, { nurLesen = false, beiAenderung = () => {} } = {}) {
+export function baueFormular(container, daten,
+  { nurLesen = false, beiAenderung = () => {}, beiTabwechsel = () => {} } = {}) {
   const fragen = daten.fragen || [];
   const werte = {};
-  const bloecke = new Map();       // id → { frage, feld, fehler, aktualisiere() }
+  const bloecke = new Map();       // id → { frage, feld, fehler, aktualisiere(), tab }
+  // Tabs (nur mit Urlaubswochen-Frage): urlaubswochen() meldet seinen Stand, der Aufbau setzt die Funktionen.
+  let tabStand = null;
+  let tabsFertig = false;          // erst danach darf beiTabwechsel laufen (app.js kennt das Formular sonst noch nicht)
+  let tabsZeichnen = () => {};
+  let zeigeTab = () => {};
 
   for (const f of fragen) {
     const gespeichert = daten.antworten?.[f.id];
@@ -45,6 +51,7 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
     const b = bloecke.get(f.id);
     b.fehler.hidden = true;
     b.feld.classList.remove('hat-fehler');
+    tabsZeichnen();
     sichtbarkeitAktualisieren();
     beiAenderung();
   }
@@ -195,13 +202,13 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
 
     const erklaerung = el('p', 'erklaerung',
       'Die Wochen müssen nicht zusammenhängen. Es sind Wünsche, keine Genehmigungen.');
-    // Zähler läuft beim Scrollen mit; die zweite Zeile führt zu den einzelnen Tagen unter dem Kalender.
+    // Zähler läuft beim Scrollen mit; die zweite Zeile führt zum Tab „Einzelne Tage“.
     const zaehler = el('div', 'zaehler');
     const zaehlerText = el('p', null);
     zaehlerText.setAttribute('aria-live', 'polite');
     const sprung = el('p', 'tage-sprung');
     const sprungText = el('span', null);
-    const sprungKnopf = el('button', 'klein-knopf', 'Einzelne Tage wählen ↓');
+    const sprungKnopf = el('button', 'klein-knopf', 'Weiter zu den einzelnen Tagen');
     sprungKnopf.type = 'button';
     sprung.append(sprungText, sprungKnopf);
     sprung.hidden = true;
@@ -233,31 +240,15 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       monate.append(block);
     }
 
-    const tageBox = el('section', 'box einzeltage');
+    // Inhalt des Tabs „Einzelne Tage“ (der Tab-Titel ersetzt eine eigene Überschrift).
+    const tageBox = el('section', 'einzeltage');
     const tageText = el('p', null);
     const tageMonate = el('div', 'monate');
-    const tageTitel = el('h3', null, 'Einzelne Tage');
-    tageTitel.tabIndex = -1;
-    tageBox.append(tageTitel, tageText, tageMonate);
+    tageBox.append(tageText, tageMonate);
     tageBox.hidden = true;
+    sprungKnopf.addEventListener('click', () => zeigeTab('tage', true));
 
-    // Sprung: Monat des ersten passenden Tags aufklappen und direkt zu dessen Kästchen;
-    // ohne passenden Tag zur Überschrift des Bereichs.
-    sprungKnopf.addEventListener('click', () => {
-      const ziel = sprungZiel(ctx, wochenVon(), tageVon(), maxAmStueck);
-      const monat = ziel && tageMonate.querySelector(`details[data-monat="${Number(ziel.slice(5, 7))}"]`);
-      if (monat) monat.open = true;
-      const kaestchen = ziel && tageMonate.querySelector(`input[value="${ziel}"]`);
-      if (kaestchen) {
-        kaestchen.closest('label').scrollIntoView({ behavior: 'smooth', block: 'center' });
-        kaestchen.focus({ preventScroll: true });
-      } else {
-        tageBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        tageTitel.focus({ preventScroll: true });
-      }
-    });
-
-    const teile = [erklaerung, zaehler, hinweis, monate, tageBox];
+    const teile = [erklaerung, zaehler, hinweis, monate];
     const bereiche = gesperrteZeitraeume(kalender);
     if (bereiche.length) {
       const box = el('section', 'box box-gesperrt');
@@ -269,7 +260,7 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       teile.push(box);
     }
 
-    // Tage je Monat, eingeklappt; offen, wenn darin ein Tag gewählt ist.
+    // Tage je Monat, eingeklappt.
     function zeichneTage(wochen, tage, rest) {
       const gruppen = new Map();
       for (const t of waehlbareTage(ctx, wochen)) {
@@ -279,17 +270,13 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       }
       // Offene Monate und Fokus merken: Die Liste wird neu gebaut, soll aber nicht springen.
       const offen = new Set([...tageMonate.querySelectorAll('details[open]')].map((d) => d.dataset.monat));
-      const erstes = tageMonate.children.length === 0;
       const fokus = tageMonate.contains(document.activeElement) ? document.activeElement.value : null;
-      const nahe = erstes ? naheMonate(ctx, wochen) : [];
       tageMonate.replaceChildren(...[...gruppen].map(([monat, liste]) => {
         const auf = document.createElement('details');
         auf.className = 'monat';
         auf.dataset.monat = String(monat);
-        // Beim ersten Zeichnen öffnen Monate mit gewähltem Tag oder neben gewählten Wochen;
-        // danach gilt nur, was der Nutzer offen gelassen hat.
-        auf.open = offen.has(String(monat))
-          || (erstes && (nahe.includes(monat) || liste.some((t) => tage.includes(t.datum))));
+        // Alles startet zugeklappt; offen ist nur, was der Nutzer (oder der Sprungknopf) geöffnet hat.
+        auf.open = offen.has(String(monat));
         auf.append(el('summary', null, MONATE[monat - 1]));
         for (const t of liste) {
           const zeile = el('label', 'woche');
@@ -340,9 +327,13 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       }
       sprung.hidden = tageBox.hidden || rest <= 0 || nurLesen;
       sprungText.textContent = `Noch ${rest} ${rest === 1 ? 'Urlaubstag' : 'Urlaubstage'} übrig → `;
+      tabStand = { hatEinzeltage: grenzen.einzeltage, wochenVoll: grenzen.einzeltage && wochen.length === maxWochen,
+        rest, anzahlTage: tage.length };
+      tabsZeichnen();
+      if (tabsFertig) beiTabwechsel();   // Tab-Stand geändert → Leistenknopf neu beschriften
     }
     aktualisiere();
-    return { teile, aktualisiere };
+    return { teile, aktualisiere, tageTeil: grenzen.einzeltage ? tageBox : null };
   }
 
   const BAUER = {
@@ -363,6 +354,10 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
   if (fragen.some(istPflicht)) {
     container.append(el('p', 'klein pflicht-hinweis', 'Fragen mit * müssen beantwortet werden.'));
   }
+  // Mit Urlaubswochen-Frage: Tabs „Urlaubswochen“, „Einzelne Tage“, „Zusatzfragen“ (übrige Fragen).
+  const mitTabs = fragen.some((f) => f.typ === 'urlaubswochen');
+  const tabBereiche = { wochen: el('div', 'tab-bereich'), tage: el('div', 'tab-bereich'), zusatz: el('div', 'tab-bereich') };
+  let tageTeil = null;
   for (const f of fragen) {
     const feld = el('fieldset', f.typ === 'hinweis' ? 'frage frage-hinweis' : `frage frage-${f.typ}`);
     feld.id = `frage-${f.id}`;
@@ -375,12 +370,101 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
     const bauer = BAUER[f.typ];
     const teil = bauer ? bauer(f) : { teile: [], aktualisiere() {} };
     feld.append(...teil.teile);
+    if (teil.tageTeil) tageTeil = teil.tageTeil;
     const fehler = el('p', 'frage-fehler');
     fehler.setAttribute('role', 'alert');
     fehler.hidden = true;
     feld.append(fehler);
-    container.append(feld);
-    bloecke.set(f.id, { frage: f, feld, fehler, aktualisiere: teil.aktualisiere });
+    const tab = f.typ === 'urlaubswochen' ? 'wochen' : 'zusatz';
+    (mitTabs ? tabBereiche[tab] : container).append(feld);
+    bloecke.set(f.id, { frage: f, feld, fehler, aktualisiere: teil.aktualisiere, tab });
+  }
+
+  let tabs = null;
+  if (mitTabs) {
+    if (tageTeil) tabBereiche.tage.append(tageTeil);
+    const hatZusatz = fragen.some((f) => f.typ !== 'urlaubswochen');
+    const stand = () => tabZustand({
+      hatEinzeltage: Boolean(tabStand?.hatEinzeltage && tageTeil), hatZusatz,
+      wochenVoll: Boolean(tabStand?.wochenVoll), rest: tabStand?.rest ?? 0, anzahlTage: tabStand?.anzahlTage ?? 0,
+    });
+    const fehlerTabs = () => new Set([...bloecke.values()]
+      .filter((b) => b.feld.classList.contains('hat-fehler')).map((b) => b.tab));
+    const leiste = el('div', 'tab-leiste');
+    leiste.setAttribute('role', 'tablist');
+    const knoepfe = {};
+    let aktuell = 'wochen';
+    // Stand beim Laden: Aufleuchten nur beim Wechsel gesperrt → frei, nicht bei jedem Neuladen.
+    let tageGesperrt = stand().find((t) => t.id === 'tage')?.gesperrt ?? true;
+    for (const [id, bereich] of Object.entries(tabBereiche)) {
+      bereich.id = `tab-bereich-${id}`;
+      bereich.setAttribute('role', 'tabpanel');
+      bereich.setAttribute('aria-labelledby', `tab-${id}`);
+      const knopf = el('button', 'tab');
+      knopf.type = 'button';
+      knopf.id = `tab-${id}`;
+      knopf.setAttribute('role', 'tab');
+      knopf.setAttribute('aria-controls', bereich.id);
+      knopf.addEventListener('click', () => {
+        if (knopf.getAttribute('aria-disabled') !== 'true') zeigeTab(id, true);
+      });
+      knopf.addEventListener('animationend', () => knopf.classList.remove('aufleuchten'));
+      knoepfe[id] = knopf;
+    }
+    // Pfeiltasten links/rechts wechseln zwischen freien Tabs.
+    leiste.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      const frei = stand().filter((t) => !t.gesperrt).map((t) => t.id);
+      const i = frei.indexOf(aktuell);
+      const ziel = frei[(i + (e.key === 'ArrowRight' ? 1 : frei.length - 1)) % frei.length];
+      zeigeTab(ziel, false);
+      knoepfe[ziel].focus();
+      e.preventDefault();
+    });
+
+    tabsZeichnen = () => {
+      const liste = stand();
+      const mitFehler = fehlerTabs();
+      // Gesperrter oder weggefallener Tab: zurück zu den Wochen.
+      if (liste.find((t) => t.id === aktuell)?.gesperrt !== false) aktuell = 'wochen';
+      leiste.replaceChildren(...liste.map((t) => {
+        const k = knoepfe[t.id];
+        k.replaceChildren(document.createTextNode(t.titel));
+        if (t.abzeichen) k.append(el('span', 'tab-abzeichen', t.abzeichen));
+        k.setAttribute('aria-selected', String(t.id === aktuell));
+        k.setAttribute('aria-disabled', String(t.gesperrt));
+        k.tabIndex = t.id === aktuell ? 0 : -1;
+        k.classList.toggle('hervorgehoben', t.hervorgehoben);
+        k.classList.toggle('hat-fehler', mitFehler.has(t.id));
+        if (t.id === 'tage') {
+          // Einmal aufleuchten, wenn der Tab frei wird (kein Dauerblinken).
+          if (tageGesperrt && !t.gesperrt && t.hervorgehoben) k.classList.add('aufleuchten');
+          tageGesperrt = t.gesperrt;
+        }
+        return k;
+      }));
+      for (const [id, bereich] of Object.entries(tabBereiche)) bereich.hidden = id !== aktuell;
+    };
+    zeigeTab = (id, scrollen) => {
+      aktuell = id;
+      tabsZeichnen();
+      if (scrollen) leiste.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      beiTabwechsel();
+    };
+    container.append(leiste, tabBereiche.wochen, tabBereiche.tage, tabBereiche.zusatz);
+    tabsZeichnen();
+    tabsFertig = true;
+    tabs = {
+      weiter() {
+        const ziel = naechsterTab(stand(), aktuell);
+        if (ziel) zeigeTab(ziel, true);
+      },
+      istLetzter: () => naechsterTab(stand(), aktuell) === null,
+      zeigeFehlerTab() {
+        const ziel = ersterTabMitFehler(stand(), fehlerTabs());
+        if (ziel && ziel !== aktuell) zeigeTab(ziel, false); else tabsZeichnen();
+      },
+    };
   }
 
   function sichtbarkeitAktualisieren() {
@@ -395,6 +479,7 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       b.fehler.hidden = !code;
       b.feld.classList.toggle('hat-fehler', Boolean(code));
     }
+    tabs?.zeigeFehlerTab();
   }
 
   function antworten() {
@@ -404,5 +489,5 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
   }
 
   sichtbarkeitAktualisieren();
-  return { antworten, zeigeFehler, sichtbarkeitAktualisieren };
+  return { antworten, zeigeFehler, sichtbarkeitAktualisieren, tabs };
 }
