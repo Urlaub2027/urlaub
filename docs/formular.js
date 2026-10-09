@@ -241,15 +241,20 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
     tageBox.append(tageTitel, tageText, tageMonate);
     tageBox.hidden = true;
 
-    // Sprung: Monat des ersten passenden Tags aufklappen, hinscrollen, Fokus auf die Überschrift.
+    // Sprung: Monat des ersten passenden Tags aufklappen und direkt zu dessen Kästchen;
+    // ohne passenden Tag zur Überschrift des Bereichs.
     sprungKnopf.addEventListener('click', () => {
       const ziel = sprungZiel(ctx, wochenVon(), tageVon(), maxAmStueck);
-      if (ziel) {
-        const monat = tageMonate.querySelector(`details[data-monat="${Number(ziel.slice(5, 7))}"]`);
-        if (monat) monat.open = true;
+      const monat = ziel && tageMonate.querySelector(`details[data-monat="${Number(ziel.slice(5, 7))}"]`);
+      if (monat) monat.open = true;
+      const kaestchen = ziel && tageMonate.querySelector(`input[value="${ziel}"]`);
+      if (kaestchen) {
+        kaestchen.closest('label').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        kaestchen.focus({ preventScroll: true });
+      } else {
+        tageBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        tageTitel.focus({ preventScroll: true });
       }
-      tageBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      tageTitel.focus({ preventScroll: true });
     });
 
     const teile = [erklaerung, zaehler, hinweis, monate, tageBox];
