@@ -159,6 +159,8 @@ Wert nicht größer sein als der obere; gleich ist erlaubt. „Höchstens Wochen
 
 **Einzelne Tage nach den Wochen erlauben:** Hat jemand alle erlaubten Wochen gewählt und wegen Feiertagen noch Urlaubstage übrig, kann er den Rest als einzelne Tage wählen. Ein Tag, der einen Urlaub mit der Höchstzahl Wochen am Stück direkt verlängern würde, ist gesperrt – der Grund steht am Tag. Geht nur, wenn „Höchstens Wochen“ und „Höchstens Urlaubstage“ eingeschaltet sind. Die Auswertung zeigt die Tage in einer eigenen Tabelle, die Excel-Datei in einem eigenen Blatt.
 
+**Tabs im Formular:** Bei Umfragen mit Urlaubswochen ist das Mitarbeiter-Formular in Tabs geteilt: „Urlaubswochen“, „Einzelne Tage“ (frei, sobald alle Wochen gewählt sind und Tage übrig bleiben – dann hervorgehoben mit „N übrig“) und „Zusatzfragen“ (alle übrigen Fragen). Unten führt „Weiter →“ Schritt für Schritt bis zum Absenden; die Tabs oben bleiben anklickbar.
+
 **Bedingungen:** Eine Frage kann nur erscheinen, wenn früher gestellte Fragen passend
 beantwortet wurden.
 
