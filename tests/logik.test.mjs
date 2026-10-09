@@ -4,7 +4,7 @@ import {
   codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, zeitpunkt,
   folgeLaenge, gesperrteZeitraeume, gesperrteGewaehlte,
   wochenAus, tageAus, einzeltageAn, plusTage, wochentag, tagKurz, tagLang, kwVon, tageKontext,
-  waehlbareTage, tagSperrgrund, sperrText, tageBereinigen, hinweisEntfernt,
+  waehlbareTage, tagSperrgrund, sperrText, tageBereinigen, hinweisEntfernt, sprungZiel, naheMonate,
 } from '../docs/logik.js';
 
 const kalender = [
@@ -195,4 +195,20 @@ test('5-Tage-Woche: Freitag vor dem Block gesperrt, Donnerstag frei, kein Samsta
   assert.ok(tagSperrgrund(c, '2027-07-23', BLOCK, [], 3));
   assert.equal(tagSperrgrund(c, '2027-07-22', BLOCK, [], 3), null);
   assert.ok(!waehlbareTage(c, BLOCK).some((x) => wochentag(x.datum) >= 6));
+});
+
+test('Sprungziel: erster wählbarer Tag ab der letzten gewählten Woche', () => {
+  assert.equal(sprungZiel(ctx(), BLOCK, [], 3), '2027-08-17');                 // Mo 16.08. gesperrt
+  assert.equal(sprungZiel(ctx(), BLOCK, ['2027-08-17'], 3), '2027-08-18');     // gewählte Tage überspringen
+  assert.equal(sprungZiel(ctx(), [29, 30], [], 3), '2027-08-02');              // Block unter Höchstlänge
+  assert.equal(sprungZiel(ctx(), [33, 34], [], 3), '2027-07-19');              // danach nichts mehr → vorne
+  assert.equal(sprungZiel(ctx(), [29, 30, 31, 32, 33, 34], [], 6), null);      // nichts wählbar
+});
+
+test('Nahe Monate: Monate der freien Wochen direkt vor und nach gewählten Wochen', () => {
+  assert.deepEqual(naheMonate(ctx(), BLOCK), [7, 8]);                    // KW 29 (Juli), KW 33 (August)
+  assert.deepEqual(naheMonate(ctx(), [34]), [8]);                        // KW 35 fehlt im Kalender
+  assert.deepEqual(naheMonate(ctx(), [29, 30, 31, 32, 33, 34]), []);
+  const gesperrt = tageKontext({ kalender: kal.map((k) => ({ ...k, gesperrt: k.kw === 33 })), arbeitstage_pro_woche: 6 });
+  assert.deepEqual(naheMonate(gesperrt, BLOCK), [7]);
 });
