@@ -10,8 +10,8 @@ import {
 } from './admin-fragen.js';
 
 const REGELN = {
-  urlaubswochen: ['pflicht', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage', 'gesperrte_monate',
-    'gesperrte_wochen'],
+  urlaubswochen: ['pflicht', 'min_wochen', 'max_wochen', 'max_am_stueck', 'max_urlaubstage', 'einzeltage',
+    'gesperrte_monate', 'gesperrte_wochen'],
   einfach: ['pflicht'],
   janein: ['pflicht'],
   skala: ['pflicht'],
@@ -36,6 +36,7 @@ const REGEL_TEXT = {
   max_wochen: 'Höchstens Wochen',
   max_am_stueck: 'Höchstens Wochen am Stück',
   max_urlaubstage: 'Höchstens Urlaubstage',
+  einzeltage: 'Einzelne Tage nach den Wochen erlauben',
   gesperrte_monate: 'Gesperrte Monate',
   gesperrte_wochen: 'Gesperrte Wochen',
 };
@@ -74,7 +75,7 @@ function regelZeile(f, art) {
   const schluessel = `r${f.id}-${art}`;
   const setzen = (wert, aktiv) => aktion('org_regel_setzen', { p_frage_id: f.id, p_art: art, p_wert: wert, p_aktiv: aktiv });
 
-  if (art === 'pflicht') {
+  if (art === 'pflicht' || art === 'einzeltage') {
     zeile.append(schalter(schluessel, r?.aktiv, REGEL_TEXT[art], (an) => setzen(null, an)));
     return zeile;
   }

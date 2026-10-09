@@ -22,7 +22,7 @@ const daten = {
   ],
   mitarbeiter: [
     { id: 1, name: 'Anna Ä. <&>', link: 'x', geaendert_am: '2026-10-01T14:00:00Z',
-      antworten: { 1: [1, 30], 2: 21 }, verstoesse: { 1: 'ZU_VIELE_AM_STUECK' } },
+      antworten: { 1: [1, 30, '2027-08-17'], 2: 21 }, verstoesse: { 1: 'ZU_VIELE_AM_STUECK' } },
     { id: 2, name: 'Ben', link: 'y', geaendert_am: null, antworten: {}, verstoesse: {} },
   ],
 };
@@ -39,9 +39,10 @@ print(json.dumps({'daten': {ws.title: [[c for c in row] for row in ws.iter_rows(
 `, datei], { encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
   assert.equal(r.status, 0, r.stderr);
   const { daten: wb, fix } = JSON.parse(r.stdout);
-  assert.deepEqual(Object.keys(wb), ['Antworten', 'Wochen', 'Matrix']);
+  assert.deepEqual(Object.keys(wb), ['Antworten', 'Wochen', 'Matrix', 'Einzelne Tage']);
+  assert.deepEqual(wb['Einzelne Tage'][1], ['Di 17.08.2027', null, 1, 'Anna Ä. <&>']);
   assert.deepEqual(wb.Antworten[0], ['Name', 'Abgegeben', 'Letzte Änderung', 'Urlaub', 'Schicht', 'Alt (aus)', 'Hinweis']);
-  assert.deepEqual(wb.Antworten[1].slice(0, 6), ['Anna Ä. <&>', 'ja', '01.10.2026, 16:00 Uhr', 'KW 1, KW 30', 'Früh', null]);
+  assert.deepEqual(wb.Antworten[1].slice(0, 6), ['Anna Ä. <&>', 'ja', '01.10.2026, 16:00 Uhr', 'KW 1, KW 30 · Di 17.08.', 'Früh', null]);
   assert.match(wb.Antworten[1][6], /^Urlaub: .*am Stück/);
   assert.deepEqual(wb.Antworten[2], ['Ben', 'nein', null, null, null, null, null]);
   assert.equal(wb.Wochen.length, 48);
@@ -59,6 +60,11 @@ print(json.dumps({'daten': {ws.title: [[c for c in row] for row in ws.iter_rows(
   assert.equal(summe[0], 'Anzahl');
   assert.equal(summe[wb.Matrix[0].indexOf('KW 1')], 1);
   assert.equal(summe[kw30], 1);
+});
+
+test('Ohne einzelne Tage kein Blatt „Einzelne Tage“', () => {
+  const ohneTage = { ...daten, mitarbeiter: daten.mitarbeiter.map((m) => ({ ...m, antworten: { ...m.antworten, 1: [1, 30] } })) };
+  assert.deepEqual(excelBlaetter(ohneTage).map((b) => b.name), ['Antworten', 'Wochen', 'Matrix']);
 });
 
 test('Excel-Datei ohne Urlaubswochen hat nur das Blatt „Antworten“', { skip: python.status !== 0 && 'python/openpyxl nicht verfügbar' }, () => {

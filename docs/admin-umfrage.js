@@ -202,10 +202,15 @@ function listeInhalt(werte) {
 
 function wochenInhalt(z) {
   const max = Math.max(1, ...z.wochen.map((w) => w.anzahl));
-  return tabelle(['KW', 'Zeitraum', 'Anzahl', 'Namen'], z.wochen.map((w) => zeile(
+  const teile = [tabelle(['KW', 'Zeitraum', 'Anzahl', 'Namen'], z.wochen.map((w) => zeile(
     [`KW ${w.kw}`, w.zeitraum + (w.feiertag ? ` (${w.feiertag})` : ''), w.anzahl, w.namen],
     w.anzahl > 0 && w.anzahl >= Math.max(2, max * 0.75) ? 'viel' : null,
-  )));
+  )))];
+  if (z.tage?.length) {
+    teile.push(element('h4', null, 'Einzelne Tage'),
+      tabelle(['Datum', 'KW', 'Anzahl', 'Namen'], z.tage.map((t) => zeile([t.text, t.kw ? `KW ${t.kw}` : '', t.anzahl, t.namen]))));
+  }
+  return teile;
 }
 
 function zeichneAntworten() {
@@ -222,7 +227,7 @@ function zeichneAntworten() {
     if (z.art === 'auswahl') {
       box.append(...auswahlInhalt(f, z));
     } else if (z.art === 'wochen') {
-      box.append(wochenInhalt(z));
+      box.append(...wochenInhalt(z));
     } else if (!z.beantwortet) {
       box.append(element('p', 'klein', 'Noch keine Antworten.'));
     } else if (z.art === 'zahl') {

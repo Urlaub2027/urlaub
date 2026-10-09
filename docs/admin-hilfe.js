@@ -22,6 +22,7 @@ const FEHLER = {
   TITEL_LEER: 'Bitte einen Titel eingeben.',
   FRIST_LEER: 'Bitte eine Frist mit Datum und Uhrzeit eingeben.',
   GRUNDDATEN_GESPERRT: 'Jahr, Bundesland und Arbeitstage (bzw. „von“ und „bis“ einer Skala) lassen sich nicht mehr ändern, weil schon Antworten vorliegen.',
+  EINZELTAGE_OHNE_GRENZEN: 'Einzelne Tage gehen nur, wenn „Höchstens Wochen“ und „Höchstens Urlaubstage“ eingeschaltet sind. Schalte zuerst die einzelnen Tage aus.',
   UNGUELTIGE_EINSTELLUNG: 'Mindestens eine Angabe ist ungültig. Bitte prüfe die Zahlen (z. B. „mindestens“ nicht größer als „höchstens“).',
   DATUM_FALSCHES_JAHR: 'Das Datum muss im Jahr der Umfrage liegen.',
   NICHT_SELBST: 'Du kannst dich nicht selbst sperren.',

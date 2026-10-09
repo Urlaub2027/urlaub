@@ -23,7 +23,7 @@ als **einzelne Tage** wählen – nicht früher, nicht mehr als übrig.
   `null`, nur ein/aus). Text in der Verwaltung: „Einzelne Tage nach den Wochen erlauben“.
 - Einschalten (oder eingeschaltet lassen) ist nur gültig, wenn `max_wochen` **und**
   `max_urlaubstage` eingeschaltet sind. Sonst scheitert `org_regel_setzen` mit
-  `UNGUELTIGE_EINSTELLUNG` – auch beim Ausschalten von `max_wochen`/`max_urlaubstage`, solange
+  `EINZELTAGE_OHNE_GRENZEN` – auch beim Ausschalten von `max_wochen`/`max_urlaubstage`, solange
   `einzeltage` an ist. Prüfung gemeinsam mit `regeln_widerspruch`.
 - Vorlagen und bestehende Umfragen: Regel nicht angelegt = aus. Kein Verhalten ändert sich,
   bis ein Organisator den Schalter setzt.
@@ -60,7 +60,7 @@ Dazu im Formular, zur aktuellen Auswahl:
   Blöcke unterhalb der Höchstlänge dürfen verlängert werden.
 - Beispiel Block KW 30–32, `max_am_stueck` = 3: Montag KW 33 gesperrt; Dienstag KW 33 erlaubt
   (Montag wird gearbeitet). Montag und Dienstag zusammen geht nicht, weil der Montag gesperrt
-  ist. Freitag vor KW 30 gesperrt. Ist der Montag KW 33 ein Feiertag, ist der Dienstag gesperrt.
+  ist. Samstag vor KW 30 gesperrt (bei Mo–Sa ist der Samstag ein Arbeitstag; bei Mo–Fr wäre es der Freitag). Ist der Montag KW 33 ein Feiertag, ist der Dienstag gesperrt.
 - **Erklärung sichtbar am Tag** (nicht nur als Tooltip, wegen Handy):
   „Nicht wählbar: würde deinen Urlaub KW 30–32 auf mehr als 3 Wochen am Stück verlängern.“
 - Ist `max_am_stueck` aus, entfällt die Prüfung.
@@ -89,10 +89,12 @@ Dazu im Formular, zur aktuellen Auswahl:
 Tage der Umfrage (`[{"datum": "2027-05-24", "name": "Pfingstmontag"}]`) im Bereich des
 Kalenders. Damit rechnet das Formular wählbare Tage selbst; die Datenbank rechnet verbindlich
 nach.
+Jeder Kalendereintrag bekommt zusätzlich `montag` (`YYYY-MM-DD`).
 
 ### Prüfung in der Datenbank (`urlaub.wochen_verstoss`)
 - Elemente: Zahl (KW, wie bisher) oder Text im Format `YYYY-MM-DD`, der ein gültiges Datum ist.
   Sonst `UNGUELTIGE_WOCHE` bzw. neu `UNGUELTIGER_TAG`.
+  Texte, die nicht dem Format `YYYY-MM-DD` entsprechen, bleiben `UNGUELTIGE_WOCHE`.
 - Bisherige Wochenprüfungen laufen auf `antwort_wochen(...)` unverändert.
 - Für Tage, in dieser Reihenfolge:
   - `einzeltage` aus und Tage vorhanden → `UNGUELTIGER_TAG`.

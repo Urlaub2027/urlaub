@@ -1,6 +1,6 @@
 // Auswertung einer Umfrage aus der Antwort von org_umfrage (rein, ohne DOM, dadurch testbar):
 // Zusammenfassung je Frage, Zeilen je Mitarbeiter und die Blätter für den Excel-Export.
-import { zeitpunkt } from './logik.js';
+import { zeitpunkt, wochenAus, tageAus, tagLang, kwVon } from './logik.js';
 import { antwortText, fehlerText, istLeer } from './formular-logik.js';
 
 const mitarbeiterVon = (daten) => daten.mitarbeiter || [];
@@ -29,10 +29,20 @@ function auswahl(antworten, zeilen) {
 const runde = (zahl, stellen) => Math.round(zahl * 10 ** stellen) / 10 ** stellen;
 const schnitt = (zahlen) => (zahlen.length ? zahlen.reduce((s, z) => s + z, 0) / zahlen.length : null);
 
+// Einzelne Tage (Urlaubswochen-Antwort mit Datumstexten), nach Datum.
+function tageZeilen(frage, daten) {
+  const antworten = beantwortet(frage, daten);
+  const alle = [...new Set(antworten.flatMap((x) => tageAus(alsListe(x.wert))))].sort();
+  return alle.map((datum) => {
+    const namen = antworten.filter((x) => tageAus(alsListe(x.wert)).includes(datum)).map((x) => x.name);
+    return { datum, text: tagLang(datum), kw: kwVon(daten.kalender, datum), anzahl: namen.length, namen: namen.join(', ') };
+  });
+}
+
 function wochenZeilen(frage, daten) {
   const antworten = beantwortet(frage, daten);
   return (daten.kalender || []).filter((k) => !k.gesperrt).map((k) => {
-    const namen = antworten.filter((x) => alsListe(x.wert).some((kw) => gleicheId(kw, k.kw))).map((x) => x.name);
+    const namen = antworten.filter((x) => wochenAus(alsListe(x.wert)).some((kw) => gleicheId(kw, k.kw))).map((x) => x.name);
     return {
       kw: k.kw,
       zeitraum: `${k.von}–${k.bis}`,
@@ -94,7 +104,7 @@ export function zusammenfassung(frage, daten) {
         werte: antworten.map((x) => ({ name: x.name, text: antwortText(frage, x.wert) })),
       };
     case 'urlaubswochen':
-      return { art: 'wochen', beantwortet: antworten.length, wochen: wochenZeilen(frage, daten) };
+      return { art: 'wochen', beantwortet: antworten.length, wochen: wochenZeilen(frage, daten), tage: tageZeilen(frage, daten) };
     default:
       return null;
   }
@@ -174,12 +184,21 @@ export function excelBlaetter(daten) {
       spalten: [{ titel: 'Name', breite: 24 }, ...offeneKw.map((k) => ({ titel: `KW ${k.kw}`, breite: 7 }))],
       zeilen: [
         ...mitarbeiter.map((m) => {
-          const gewaehlt = istLeer(antwortVon(m, urlaub)) ? [] : alsListe(antwortVon(m, urlaub)).map(Number);
+          const gewaehlt = istLeer(antwortVon(m, urlaub)) ? [] : wochenAus(alsListe(antwortVon(m, urlaub)));
           return [m.name, ...offeneKw.map((k) => (gewaehlt.includes(k.kw) ? 'x' : null))];
         }),
         ['Anzahl', ...wochen.map((w) => w.anzahl)],
       ],
     },
   );
+  const tage = tageZeilen(urlaub, daten);
+  if (tage.length) {
+    blaetter.push({
+      name: 'Einzelne Tage',
+      spalten: [{ titel: 'Datum', breite: 16 }, { titel: 'KW', breite: 6 }, { titel: 'Anzahl', breite: 9 },
+        { titel: 'Namen', breite: 60 }],
+      zeilen: tage.map((t) => [t.text, t.kw, t.anzahl, t.namen]),
+    });
+  }
   return blaetter;
 }

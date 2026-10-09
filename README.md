@@ -5,7 +5,7 @@ wünschen. Organisatoren legen eigene Umfragen an und stellen das Formular im
 Fragen-Baukasten selbst zusammen (Fragetypen wie Urlaubswochen, Auswahl, Ja/Nein,
 Skala, Text, Zahl, Datum; Prüfregeln, Bedingungen, Vorschau, Umfrage kopieren). Die
 Urlaubswochen-Frage bringt Jahr, Bundesland, Wochengrenzen und gesperrte Monate/Wochen
-mit. Neue Umfragen starten aus Vorlagen (Urlaubswünsche, Leer, Schicht- und
+mit. Optional dürfen nach vollen Wochen übrige Urlaubstage als einzelne Tage gewählt werden. Neue Umfragen starten aus Vorlagen (Urlaubswünsche, Leer, Schicht- und
 Verfügbarkeitswünsche, Weihnachtsfeier); eine Umfrage lässt sich als Datei sichern und
 wieder einspielen. Weitere Organisatoren werden per Einladungslink eingeladen. Einrichtung und Bedienung: [ANLEITUNG.md](ANLEITUNG.md).
 
