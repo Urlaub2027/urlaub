@@ -250,10 +250,14 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
         if (!gruppen.has(monat)) gruppen.set(monat, []);
         gruppen.get(monat).push(t);
       }
+      // Offene Monate und Fokus merken: Die Liste wird neu gebaut, soll aber nicht springen.
+      const offen = new Set([...tageMonate.querySelectorAll('details[open]')].map((d) => d.dataset.monat));
+      const fokus = tageMonate.contains(document.activeElement) ? document.activeElement.value : null;
       tageMonate.replaceChildren(...[...gruppen].map(([monat, liste]) => {
         const auf = document.createElement('details');
         auf.className = 'monat';
-        auf.open = liste.some((t) => tage.includes(t.datum));
+        auf.dataset.monat = String(monat);
+        auf.open = offen.has(String(monat)) || liste.some((t) => tage.includes(t.datum));
         auf.append(el('summary', null, MONATE[monat - 1]));
         for (const t of liste) {
           const zeile = el('label', 'woche');
@@ -276,6 +280,7 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
         }
         return auf;
       }));
+      if (fokus) tageMonate.querySelector(`input[value="${fokus}"]`)?.focus();
     }
 
     function aktualisiere() {

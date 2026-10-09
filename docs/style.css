@@ -156,6 +156,7 @@ h2 { font-size: 1.05rem; margin: 0 0 6px; }
 }
 .einzeltage summary { font-weight: 600; color: var(--monat); padding: 6px 0; cursor: pointer; }
 .tage-hinweis:empty { display: none; }
+.einzeltage .woche { grid-template-columns: auto 5.5rem 1fr; }
 
 .liste { padding-left: 1.2rem; margin: 6px 0; }
 
