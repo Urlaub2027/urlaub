@@ -547,6 +547,66 @@ as $$
   where jsonb_typeof(e) = 'string'
 $$;
 
+-- Grundsätzlich wählbare einzelne Tage: Arbeitstage (ISO-Wochentag ≤ arbeitstage_pro_woche)
+-- in nicht gesperrten KWs, ohne Feiertage und freie Tage, ohne Tage in den gewählten Wochen.
+-- Fachregel-Duplikat: waehlbareTage in docs/logik.js. Änderungen dort nachziehen.
+create or replace function urlaub.waehlbare_tage(p_frage urlaub.fragen, p_wochen int[])
+returns setof date
+language sql stable
+set search_path = ''
+as $$
+  select (k.montag + g.i)::date
+  from urlaub.kalender(p_frage.umfrage_id) k, generate_series(0, p_frage.arbeitstage_pro_woche - 1) g (i)
+  where not k.gesperrt
+    and not (k.kw = any (p_wochen))
+    and not exists (select 1 from urlaub.frei(p_frage.umfrage_id) fr where fr.datum = k.montag + g.i)
+$$;
+
+-- Verlängert p_tag einen Block aus mindestens p_max aufeinanderfolgenden gewählten KWs?
+-- Verlängern: Zwischen Block und Tag liegt kein gearbeiteter Arbeitstag. Überbrückt wird
+-- durch Nicht-Arbeitstage, Feiertage/freie Tage und andere gewählte Einzeltage (p_tage).
+-- Fachregel-Duplikat: tagSperrgrund in docs/logik.js. Änderungen dort nachziehen.
+create or replace function urlaub.tag_verlaengert_block(p_frage urlaub.fragen, p_tag date, p_wochen int[],
+                                                        p_tage date[], p_max int)
+returns boolean
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_frei  date[] := array(select fr.datum from urlaub.frei(p_frage.umfrage_id) fr);
+  v_block record;
+  v_d     date;
+begin
+  for v_block in
+    select min(k.montag) as anfang, max(k.sonntag) as ende
+    from (select x, x - row_number() over (order by x) as gruppe from unnest(p_wochen) x) s
+    join urlaub.kalender(p_frage.umfrage_id) k on k.kw = s.x
+    group by s.gruppe
+    having count(*) >= p_max
+  loop
+    if p_tag > v_block.ende then
+      v_d := v_block.ende + 1;
+      while v_d < p_tag and (extract(isodow from v_d) > p_frage.arbeitstage_pro_woche
+                             or v_d = any (v_frei) or v_d = any (p_tage)) loop
+        v_d := v_d + 1;
+      end loop;
+    elsif p_tag < v_block.anfang then
+      v_d := v_block.anfang - 1;
+      while v_d > p_tag and (extract(isodow from v_d) > p_frage.arbeitstage_pro_woche
+                             or v_d = any (v_frei) or v_d = any (p_tage)) loop
+        v_d := v_d - 1;
+      end loop;
+    else
+      continue;
+    end if;
+    if v_d = p_tag then
+      return true;
+    end if;
+  end loop;
+  return false;
+end;
+$$;
+
 -- Wochenregeln der Urlaubswochen-Frage; nur eingeschaltete Regeln zählen.
 create or replace function urlaub.wochen_verstoss(p_frage urlaub.fragen, p_wochen jsonb)
 returns text
@@ -557,18 +617,30 @@ declare
   v_regel   jsonb := (select coalesce(jsonb_object_agg(r.art, r.wert), '{}'::jsonb)
                       from urlaub.regeln r where r.frage_id = p_frage.id and r.aktiv);
   v_liste   int[];
+  v_tage    date[];
   v_erlaubt int[];
   v_stueck  int;
-  v_tage    int;
+  v_summe   int;
+  v_tag     date;
 begin
+  -- Zahlen = KWs, Texte im Format YYYY-MM-DD = einzelne Tage, alles andere ist keine Woche.
   if jsonb_typeof(p_wochen) <> 'array'
      or exists (select 1 from jsonb_array_elements(p_wochen) e
-                where jsonb_typeof(e) <> 'number'
-                   or abs((e #>> '{}')::numeric) > 100
-                   or (e #>> '{}')::numeric <> trunc((e #>> '{}')::numeric)) then
+                where not (jsonb_typeof(e) = 'number'
+                           or (jsonb_typeof(e) = 'string' and (e #>> '{}') ~ '^\d{4}-\d{2}-\d{2}$')))
+     or exists (select 1 from jsonb_array_elements(p_wochen) e
+                where jsonb_typeof(e) = 'number'
+                  and (abs((e #>> '{}')::numeric) > 100
+                       or (e #>> '{}')::numeric <> trunc((e #>> '{}')::numeric))) then
     return 'UNGUELTIGE_WOCHE';
   end if;
-  select array_agg(((e #>> '{}')::numeric)::int) into v_liste from jsonb_array_elements(p_wochen) e;
+  if exists (select 1 from jsonb_array_elements(p_wochen) e
+             where jsonb_typeof(e) = 'string' and not urlaub.ist_datumstext(e)) then
+    return 'UNGUELTIGER_TAG';
+  end if;
+  v_liste := urlaub.antwort_wochen(p_wochen);
+  v_tage  := urlaub.antwort_tage(p_wochen);
+
   select coalesce(array_agg(k.kw), '{}') into v_erlaubt from urlaub.kalender(p_frage.umfrage_id) k where not k.gesperrt;
   if exists (select 1 from unnest(v_liste) x where not (x = any (v_erlaubt))) then
     return 'UNGUELTIGE_WOCHE';
@@ -591,9 +663,32 @@ begin
       return 'ZU_VIELE_AM_STUECK';
     end if;
   end if;
+
+  if cardinality(v_tage) > 0 then
+    if not (v_regel ? 'einzeltage')
+       or exists (select 1 from unnest(v_tage) t
+                  where not (t = any (array(select urlaub.waehlbare_tage(p_frage, v_liste))))) then
+      return 'UNGUELTIGER_TAG';
+    end if;
+    if (select count(distinct t) from unnest(v_tage) t) <> cardinality(v_tage) then
+      return 'DOPPELTER_TAG';
+    end if;
+    if not (v_regel ? 'max_wochen') or cardinality(v_liste) <> (v_regel ->> 'max_wochen')::int then
+      return 'TAGE_ERST_NACH_WOCHEN';
+    end if;
+    if v_regel ? 'max_am_stueck' then
+      foreach v_tag in array v_tage loop
+        if urlaub.tag_verlaengert_block(p_frage, v_tag, v_liste, v_tage, (v_regel ->> 'max_am_stueck')::int) then
+          return 'TAG_ZU_VIELE_AM_STUECK';
+        end if;
+      end loop;
+    end if;
+  end if;
+
   if v_regel ? 'max_urlaubstage' then
-    select coalesce(sum(k.arbeitstage), 0) into v_tage from urlaub.kalender(p_frage.umfrage_id) k where k.kw = any (v_liste);
-    if v_tage > (v_regel ->> 'max_urlaubstage')::int then
+    select coalesce(sum(k.arbeitstage), 0) + cardinality(v_tage) into v_summe
+    from urlaub.kalender(p_frage.umfrage_id) k where k.kw = any (v_liste);
+    if v_summe > (v_regel ->> 'max_urlaubstage')::int then
       return 'ZU_VIELE_TAGE';
     end if;
   end if;

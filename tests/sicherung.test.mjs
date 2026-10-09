@@ -224,10 +224,7 @@ test('Sicherung mit einzelnen Tagen und Regel einzeltage', async () => {
   const bau = await baueUmfrage(db, chef, { titel: 'Tage', fragen: [{ key: 'w', typ: 'urlaubswochen', regeln: { einzeltage: null } }] });
   const code = (await db.query("insert into urlaub.mitarbeiter (umfrage_id, name) values ($1, 'Anna') returning code",
     [bau.umfrageId])).rows[0].code;
-  await db.query('insert into urlaub.abgaben (mitarbeiter_id) select id from urlaub.mitarbeiter where code = $1', [code]);
-  await db.query(`insert into urlaub.antworten (mitarbeiter_id, frage_id, wert)
-    select id, $2, $3::jsonb from urlaub.mitarbeiter where code = $1`,
-    [code, bau.ids.w, JSON.stringify([12, 13, 30, 31, 32, 44, '2027-08-17'])]);
+  await browser(db, 'select public.umfrage_absenden($1, $2)', [code, JSON.stringify({ [bau.ids.w]: ['2027-08-17', 44, 12, 13, 30, 31, 32] })]);
   const s = await sicherung(bau.umfrageId);
   const r = await einspielen(s);
   const nachher = await umfrage(r.id);
