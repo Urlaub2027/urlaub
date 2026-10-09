@@ -413,3 +413,29 @@ test('Trennung: Eva kann nichts an Chefs Fragen ändern', async () => {
   }
   assert.equal((await findeFrage(u, e)).text, 'Neue Frage');
 });
+
+test('Regel einzeltage: nur mit max_wochen und max_urlaubstage', async () => {
+  const u = await neueUmfrage();
+  const uw = (await fragenVon(u))[0].id; // Standard: max_wochen 6, max_urlaubstage 36 eingeschaltet
+  await regel(uw, 'einzeltage', 'egal');
+  assert.deepEqual((await findeFrage(u, uw)).regeln.einzeltage, { wert: null, aktiv: true });
+  // Grenzen ausschalten, solange einzeltage an ist: abgelehnt, nichts geändert.
+  await assert.rejects(regel(uw, 'max_wochen', 6, false), /EINZELTAGE_OHNE_GRENZEN/);
+  await assert.rejects(regel(uw, 'max_urlaubstage', 36, false), /EINZELTAGE_OHNE_GRENZEN/);
+  assert.deepEqual((await findeFrage(u, uw)).regeln.max_wochen, { wert: 6, aktiv: true });
+  // Erst einzeltage aus, dann geht es; einzeltage wieder an scheitert.
+  await regel(uw, 'einzeltage', null, false);
+  await regel(uw, 'max_wochen', 6, false);
+  await assert.rejects(regel(uw, 'einzeltage', null, true), /EINZELTAGE_OHNE_GRENZEN/);
+  assert.deepEqual((await findeFrage(u, uw)).regeln.einzeltage, { wert: null, aktiv: false });
+  const t = await frage(u, 'text_kurz');
+  await assert.rejects(regel(t, 'einzeltage', null), /REGEL_UNPASSEND/);
+});
+
+test('Fragen-JSON: freie_tage und montag im Kalender', async () => {
+  const u = await neueUmfrage();
+  const f = (await fragenVon(u))[0];
+  assert.ok(f.urlaubswochen.freie_tage.some((t) => t.datum === '2027-05-17' && t.name === 'Pfingstmontag'));
+  assert.ok(f.urlaubswochen.freie_tage.every((t) => t.datum >= '2026-12-25' && t.datum <= '2028-01-07'));
+  assert.equal(f.urlaubswochen.kalender[0].montag, '2027-01-04');
+});

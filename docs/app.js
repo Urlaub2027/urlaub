@@ -1,6 +1,8 @@
 import './design.js';
 import { rpc } from './api.js';
-import { codeAusLink, fehlertext, zusammenfassung, zeitpunkt, gesperrteGewaehlte } from './logik.js';
+import {
+  codeAusLink, fehlertext, zusammenfassung, zeitpunkt, gesperrteGewaehlte, wochenAus, tageAus, tagLang,
+} from './logik.js';
 import {
   sichtbareFragen, antwortenZumAbsenden, antwortSchluessel, antwortText, istLeer,
 } from './formular-logik.js';
@@ -31,7 +33,7 @@ const urlaubsfrage = () => daten.fragen.find((f) => f.typ === 'urlaubswochen') |
 function entfernteWochen() {
   const f = urlaubsfrage();
   const gewaehlt = f ? daten.antworten?.[f.id] : null;
-  return Array.isArray(gewaehlt) ? gesperrteGewaehlte(f.urlaubswochen?.kalender || [], gewaehlt) : [];
+  return Array.isArray(gewaehlt) ? gesperrteGewaehlte(f.urlaubswochen?.kalender || [], wochenAus(gewaehlt)) : [];
 }
 
 function wochenText(f, kw) {
@@ -89,11 +91,18 @@ function zeigeBestaetigung(nachSpeichern) {
     if (mitWochen) {
       const wochen = document.createElement('ul');
       wochen.className = 'liste';
-      wochen.append(...wert.map((kw) => {
-        const w = document.createElement('li');
-        w.textContent = wochenText(f, kw);
-        return w;
-      }));
+      wochen.append(
+        ...wochenAus(wert).map((kw) => {
+          const w = document.createElement('li');
+          w.textContent = wochenText(f, kw);
+          return w;
+        }),
+        ...tageAus(wert).map((d) => {
+          const w = document.createElement('li');
+          w.textContent = `Einzelner Tag: ${tagLang(d)}`;
+          return w;
+        }),
+      );
       li.append(wochen);
     }
     return li;
@@ -102,8 +111,9 @@ function zeigeBestaetigung(nachSpeichern) {
   const stand = [];
   const uf = urlaubsfrage();
   if (uf && beantwortet.includes(uf)) {
-    stand.push(zusammenfassung(uf.urlaubswochen?.kalender || [], new Set(daten.antworten[uf.id]),
-      uf.regeln?.max_wochen ?? null, uf.regeln?.max_urlaubstage ?? null).text);
+    const wert = daten.antworten[uf.id];
+    stand.push(zusammenfassung(uf.urlaubswochen?.kalender || [], new Set(wochenAus(wert)),
+      uf.regeln?.max_wochen ?? null, uf.regeln?.max_urlaubstage ?? null, tageAus(wert).length).text);
   }
   if (daten.geaendert_am) stand.push(`Stand: ${zeitpunkt(daten.geaendert_am)}`);
   $('bestaetigung-stand').textContent = stand.join('. ');

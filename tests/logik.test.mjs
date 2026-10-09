@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   codeAusLink, fehlertext, zusammenfassung, istGesperrt, nachMonat, zeitpunkt,
   folgeLaenge, gesperrteZeitraeume, gesperrteGewaehlte,
+  wochenAus, tageAus, einzeltageAn, plusTage, wochentag, tagKurz, tagLang, kwVon, tageKontext,
+  waehlbareTage, tagSperrgrund, sperrText, tageBereinigen, hinweisEntfernt,
 } from '../docs/logik.js';
 
 const kalender = [
@@ -102,4 +104,95 @@ test('Zähler ohne Wochen- oder Tagesgrenze', () => {
   assert.equal(ohneMax.limitErreicht, false);
   assert.equal(zusammenfassung(kal, new Set([1]), 6, null).text, '1 von 6 Wochen gewählt · 5 Urlaubstage');
   assert.equal(zusammenfassung(kal, new Set([1]), null, null).text, '1 Woche gewählt · 5 Urlaubstage');
+});
+
+// Ausschnitt 2027, Mo–Sa (siehe Plan „Testdaten“).
+const MONTAGE = { 29: '2027-07-19', 30: '2027-07-26', 31: '2027-08-02', 32: '2027-08-09', 33: '2027-08-16', 34: '2027-08-23' };
+const kal = Object.entries(MONTAGE).map(([kw, montag]) => ({ kw: Number(kw), montag, monat: 8, arbeitstage: 6, gesperrt: false }));
+const ctx = (frei = []) => tageKontext({ kalender: kal, arbeitstage_pro_woche: 6,
+  freie_tage: frei.map((datum) => ({ datum, name: 'Frei' })) });
+const BLOCK = [30, 31, 32];
+
+test('Gemischte Antwort zerlegen', () => {
+  assert.deepEqual(wochenAus([30, '2027-08-17', 12]), [30, 12]);
+  assert.deepEqual(tageAus([30, '2027-08-17', 12]), ['2027-08-17']);
+  assert.deepEqual(wochenAus(undefined), []);
+  assert.equal(einzeltageAn({ einzeltage: null }), true);
+  assert.equal(einzeltageAn({ pflicht: null }), false);
+});
+
+test('Datumshelfer', () => {
+  assert.equal(plusTage('2027-07-31', 1), '2027-08-01');
+  assert.equal(plusTage('2027-08-01', -1), '2027-07-31');
+  assert.equal(wochentag('2027-08-16'), 1);
+  assert.equal(wochentag('2027-08-22'), 7);
+  assert.equal(tagKurz('2027-08-17'), 'Di 17.08.');
+  assert.equal(tagLang('2027-08-17'), 'Di 17.08.2027');
+  assert.equal(kwVon(kal, '2027-08-22'), 33);
+  assert.equal(kwVon(kal, '2027-09-30'), null);
+});
+
+test('Wählbare Tage: Arbeitstage außerhalb gewählter Wochen, ohne freie Tage', () => {
+  const t = waehlbareTage(ctx(), BLOCK).map((x) => x.datum);
+  assert.equal(t.length, 18);                 // KW 29, 33, 34 je 6
+  assert.ok(t.includes('2027-07-24'));        // Samstag ist Arbeitstag
+  assert.ok(!t.includes('2027-07-25'));       // Sonntag nicht
+  assert.ok(!t.includes('2027-08-02'));       // in gewählter KW 31
+  assert.ok(!waehlbareTage(ctx(['2027-08-16']), BLOCK).some((x) => x.datum === '2027-08-16'));
+  const gesperrt = tageKontext({ kalender: kal.map((k) => ({ ...k, gesperrt: k.kw === 34 })), arbeitstage_pro_woche: 6 });
+  assert.ok(!waehlbareTage(gesperrt, BLOCK).some((x) => x.kw === 34));
+});
+
+test('Sperrgrund: Verlängerung eines vollen Blocks', () => {
+  const grund = (tag, { frei = [], tage = [], wochen = BLOCK, max = 3 } = {}) =>
+    tagSperrgrund(ctx(frei), tag, wochen, tage, max);
+  assert.deepEqual(grund('2027-08-16'), { vonKw: 30, bisKw: 32, anfang: '2027-07-26', ende: '2027-08-15' });
+  assert.equal(grund('2027-08-17'), null);
+  assert.ok(grund('2027-07-24'));                              // Sa vor dem Block
+  assert.equal(grund('2027-07-23'), null);                     // Fr: Sa wird gearbeitet
+  assert.ok(grund('2027-08-17', { frei: ['2027-08-16'] }));    // Feiertag überbrückt
+  assert.ok(grund('2027-08-17', { tage: ['2027-08-16'] }));    // gewählter Tag überbrückt
+  assert.equal(grund('2027-08-16', { max: 4 }), null);         // Block unter Höchstlänge
+  assert.equal(grund('2027-08-16', { wochen: [31, 32] }), null);
+  assert.equal(grund('2027-08-16', { max: Infinity }), null);
+  assert.equal(sperrText(grund('2027-08-16'), 3),
+    'Nicht wählbar: würde deinen Urlaub KW 30–32 auf mehr als 3 Wochen am Stück verlängern.');
+  assert.equal(sperrText({ vonKw: 30, bisKw: 30 }, 1),
+    'Nicht wählbar: würde deinen Urlaub KW 30 auf mehr als 1 Woche am Stück verlängern.');
+});
+
+test('Tage bereinigen nach Wochenwechsel', () => {
+  const g = { einzeltage: true, maxWochen: 3, maxTage: 20, maxAmStueck: 3 };   // 18 + 2 übrig
+  const b = (wochen, tage, extra = {}) => tageBereinigen(ctx(), wochen, tage, { ...g, ...extra });
+  assert.deepEqual(b(BLOCK, []), { tage: [], grund: null });
+  assert.deepEqual(b(BLOCK, ['2027-08-18']), { tage: ['2027-08-18'], grund: null });
+  assert.deepEqual(b([30, 31], ['2027-08-18']), { tage: [], grund: 'wochen' });
+  assert.deepEqual(b(BLOCK, ['2027-08-18'], { einzeltage: false }), { tage: [], grund: 'aus' });
+  // Mo verlängert, Di danach nicht mehr (Mo wird gearbeitet) → nur Mo fällt weg.
+  assert.deepEqual(b(BLOCK, ['2027-08-17', '2027-08-16']), { tage: ['2027-08-17'], grund: 'regel' });
+  assert.deepEqual(b(BLOCK, ['2027-08-10']), { tage: [], grund: 'regel' });          // in gewählter KW
+  assert.deepEqual(b(BLOCK, ['2027-08-18', '2027-08-20'], { maxTage: 19 }), { tage: ['2027-08-18'], grund: 'regel' });
+});
+
+test('Hinweise und Zähler mit Tagen', () => {
+  assert.equal(hinweisEntfernt('wochen', 6),
+    'Deine einzelnen Tage wurden entfernt, weil du nicht mehr alle 6 Wochen gewählt hast.');
+  assert.match(hinweisEntfernt('regel', 6), /nicht mehr wählbar/);
+  assert.match(hinweisEntfernt('aus', 6), /nicht mehr möglich/);
+  assert.equal(zusammenfassung(kalender, new Set([1, 2]), 6, 36, 2).text,
+    '2 von 6 Wochen gewählt · 2 einzelne Tage · 13 von 36 Urlaubstagen');
+  assert.equal(zusammenfassung(kalender, new Set([1, 2]), 6, 36, 1).text,
+    '2 von 6 Wochen gewählt · 1 einzelner Tag · 12 von 36 Urlaubstagen');
+  assert.equal(zusammenfassung(kalender, new Set([1, 2]), 6, 36).text, '2 von 6 Wochen gewählt · 11 von 36 Urlaubstagen');
+  assert.equal(fehlertext('TAGE_ERST_NACH_WOCHEN'), 'Einzelne Tage gehen erst, wenn du alle Wochen gewählt hast.');
+  assert.equal(fehlertext('TAG_ZU_VIELE_AM_STUECK'), 'Ein gewählter Tag macht deinen Urlaub zu lang am Stück.');
+  assert.equal(fehlertext('UNGUELTIGER_TAG'), 'Mindestens ein gewählter Tag ist nicht wählbar.');
+  assert.equal(fehlertext('DOPPELTER_TAG'), 'Ein Tag wurde doppelt gewählt.');
+});
+
+test('5-Tage-Woche: Freitag vor dem Block gesperrt, Donnerstag frei, kein Samstag wählbar', () => {
+  const c = tageKontext({ kalender: kal.map((k) => ({ ...k, arbeitstage: 5 })), arbeitstage_pro_woche: 5, freie_tage: [] });
+  assert.ok(tagSperrgrund(c, '2027-07-23', BLOCK, [], 3));
+  assert.equal(tagSperrgrund(c, '2027-07-22', BLOCK, [], 3), null);
+  assert.ok(!waehlbareTage(c, BLOCK).some((x) => wochentag(x.datum) >= 6));
 });

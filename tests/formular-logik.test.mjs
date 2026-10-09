@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   istLeer, sichtbareFragen, antwortenZumAbsenden, antwortText, fehlerText, regelHinweis,
 } from '../docs/formular-logik.js';
-import { antwortSchluessel } from '../docs/formular-logik.js';
+import { antwortSchluessel, mitarbeiterSicht } from '../docs/formular-logik.js';
 
 const fragen = [
   { id: 1, typ: 'janein', bedingungen: [], verknuepfung: 'und', optionen: [], regeln: {} },
@@ -161,4 +161,24 @@ test('Vorschau: Verwaltungs-Sicht in Mitarbeiter-Sicht umwandeln', async () => {
   assert.deepEqual(sicht[0].regeln, { pflicht: null });
   assert.deepEqual(sicht[1].regeln, {});
   assert.deepEqual(sicht[1].bedingungen, [{ quelle_id: 1, operator: 'ist_eine_von', werte: [11] }]);
+});
+
+test('Urlaubswochen mit einzelnen Tagen: Text, Schlüssel, Hinweis, Vorschau', () => {
+  const uw = { id: 9, typ: 'urlaubswochen', bedingungen: [], verknuepfung: 'und', optionen: [],
+    regeln: { max_wochen: 6, max_urlaubstage: 36, einzeltage: null } };
+  assert.equal(antwortText(uw, [12, 30, '2027-08-17', '2027-08-18']), 'KW 12, KW 30 · Di 17.08., Mi 18.08.');
+  assert.equal(antwortText(uw, [12]), 'KW 12');
+  // Gleiche Auswahl in anderer Reihenfolge = gleicher Schlüssel (Absenden-Knopf bleibt aus).
+  assert.equal(antwortSchluessel([uw], { 9: ['2027-08-18', 30, '2027-08-17', 12] }),
+    antwortSchluessel([uw], { 9: [12, 30, '2027-08-17', '2027-08-18'] }));
+  assert.equal(antwortSchluessel([uw], { 9: [30, 12, '2027-08-17'] }), JSON.stringify([['9', [12, 30, '2027-08-17']]]));
+  assert.match(regelHinweis(uw), /Übrige Urlaubstage danach als einzelne Tage\.$/);
+  assert.doesNotMatch(regelHinweis({ ...uw, regeln: { max_wochen: 6 } }), /einzelne Tage/);
+  for (const code of ['UNGUELTIGER_TAG', 'DOPPELTER_TAG', 'TAGE_ERST_NACH_WOCHEN', 'TAG_ZU_VIELE_AM_STUECK']) {
+    assert.notEqual(fehlerText(code, uw), 'Bitte prüfe diese Antwort.', code);
+  }
+  const sicht = mitarbeiterSicht([{ ...uw, aktiv: true, regeln: { einzeltage: { wert: null, aktiv: true } },
+    urlaubswochen: { jahr: 2027, kalender: [], freie_tage: [{ datum: '2027-05-17', name: 'Pfingstmontag' }] } }]);
+  assert.deepEqual(sicht[0].regeln, { einzeltage: null });
+  assert.deepEqual(sicht[0].urlaubswochen.freie_tage, [{ datum: '2027-05-17', name: 'Pfingstmontag' }]);
 });

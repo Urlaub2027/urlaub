@@ -219,3 +219,22 @@ test('Gelöschte Mitarbeiter: der alte Link bleibt beim Einspielen widerrufen', 
   await assert.rejects(browser(db, 'select public.urlaub_laden($1)', [codes.Anna]), /LINK_UNGUELTIG/);
   assert.equal((await browser(db, 'select public.urlaub_laden($1) as r', [codes.Ben]))[0].r.name, 'Ben');
 });
+
+test('Sicherung mit einzelnen Tagen und Regel einzeltage', async () => {
+  const bau = await baueUmfrage(db, chef, { titel: 'Tage', fragen: [{ key: 'w', typ: 'urlaubswochen', regeln: { einzeltage: null } }] });
+  const code = (await db.query("insert into urlaub.mitarbeiter (umfrage_id, name) values ($1, 'Anna') returning code",
+    [bau.umfrageId])).rows[0].code;
+  await browser(db, 'select public.umfrage_absenden($1, $2)', [code, JSON.stringify({ [bau.ids.w]: ['2027-08-17', 44, 12, 13, 30, 31, 32] })]);
+  const s = await sicherung(bau.umfrageId);
+  const r = await einspielen(s);
+  const nachher = await umfrage(r.id);
+  assert.deepEqual(nachher.fragen[0].regeln.einzeltage, { wert: null, aktiv: true });
+  assert.deepEqual(nachher.mitarbeiter[0].antworten[String(nachher.fragen[0].id)], [12, 13, 30, 31, 32, 44, '2027-08-17']);
+  // Kaputte Tage oder einzeltage ohne Grenzen: abgelehnt.
+  const kaputt = structuredClone(s);
+  kaputt.mitarbeiter[0].antworten[String(s.fragen[0].id)] = [12, '2027-02-30'];
+  await assert.rejects(einspielen(kaputt), /SICHERUNG_UNGUELTIG/);
+  const ohne = structuredClone(s);
+  ohne.fragen[0].regeln = ohne.fragen[0].regeln.filter((x) => x.art !== 'max_wochen');
+  await assert.rejects(einspielen(ohne), /SICHERUNG_UNGUELTIG/);
+});

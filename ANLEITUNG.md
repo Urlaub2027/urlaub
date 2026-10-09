@@ -157,6 +157,8 @@ und „höchstens“ (bzw. „frühestens“ und „spätestens“) beide einges
 Wert nicht größer sein als der obere; gleich ist erlaubt. „Höchstens Wochen am Stück“ und
 „Höchstens Urlaubstage“ sind mindestens 1.
 
+**Einzelne Tage nach den Wochen erlauben:** Hat jemand alle erlaubten Wochen gewählt und wegen Feiertagen noch Urlaubstage übrig, kann er den Rest als einzelne Tage wählen. Ein Tag, der einen Urlaub mit der Höchstzahl Wochen am Stück direkt verlängern würde, ist gesperrt – der Grund steht am Tag. Geht nur, wenn „Höchstens Wochen“ und „Höchstens Urlaubstage“ eingeschaltet sind. Die Auswertung zeigt die Tage in einer eigenen Tabelle, die Excel-Datei in einem eigenen Blatt.
+
 **Bedingungen:** Eine Frage kann nur erscheinen, wenn früher gestellte Fragen passend
 beantwortet wurden.
 

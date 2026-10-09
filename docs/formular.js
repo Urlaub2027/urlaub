@@ -4,7 +4,9 @@ import {
   sichtbareFragen, fehlerText, regelHinweis, istPflicht, istLeer,
 } from './formular-logik.js';
 import {
-  zusammenfassung, istGesperrt, nachMonat, gesperrteZeitraeume, gesperrteGewaehlte,
+  zusammenfassung, istGesperrt, nachMonat, gesperrteZeitraeume, gesperrteGewaehlte, MONATE,
+  wochenAus, tageAus, einzeltageAn, tagKurz, tageKontext, waehlbareTage, tagSperrgrund, sperrText,
+  tageBereinigen, hinweisEntfernt,
 } from './logik.js';
 
 function el(tag, klasse, text) {
@@ -167,20 +169,29 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
     return feldEingabe(f, eingabe, () => eingabe.value);
   }
 
-  // Bisherige Wochenauswahl: Monatsgruppen, Feiertage, gesperrte Bereiche, Zähler.
+  // Wochenauswahl: Monatsgruppen, Feiertage, gesperrte Bereiche, Zähler; danach einzelne Tage.
   function urlaubswochen(f) {
     const uw = f.urlaubswochen || {};
     const kalender = uw.kalender || [];
+    const ctx = tageKontext(uw);
     const r = f.regeln || {};
     const maxWochen = zahlRegel(r, 'max_wochen');
     const maxTage = zahlRegel(r, 'max_urlaubstage');
     const maxAmStueck = zahlRegel(r, 'max_am_stueck') ?? Infinity;
-    // Gespeicherte Wochen, die inzwischen gesperrt sind, fallen aus der Auswahl.
-    const entfernt = gesperrteGewaehlte(kalender, werte[f.id] || []);
-    if (entfernt.length) {
-      const rest = (werte[f.id] || []).filter((kw) => !entfernt.includes(kw));
-      if (rest.length) werte[f.id] = rest; else delete werte[f.id];
-    }
+    const grenzen = { einzeltage: einzeltageAn(r) && maxWochen !== null && maxTage !== null, maxWochen, maxTage, maxAmStueck };
+    const wochenVon = () => wochenAus(werte[f.id]);
+    const tageVon = () => tageAus(werte[f.id]);
+    const hinweis = el('p', 'klein tage-hinweis');
+    hinweis.setAttribute('aria-live', 'polite');
+
+    // Gespeicherte Wochen, die inzwischen gesperrt sind, und unpassende Tage fallen aus der Auswahl.
+    // (Hier direkt in werte, nicht über geaendert(): der Block ist noch nicht registriert.)
+    const entfernt = gesperrteGewaehlte(kalender, wochenVon());
+    const wochenStart = wochenVon().filter((kw) => !entfernt.includes(kw));
+    const start = tageBereinigen(ctx, wochenStart, tageVon(), grenzen);
+    const anfang = [...wochenStart, ...start.tage];
+    if (anfang.length) werte[f.id] = anfang; else delete werte[f.id];
+    hinweis.textContent = hinweisEntfernt(start.grund, maxWochen);
 
     const erklaerung = el('p', 'erklaerung',
       'Die Wochen müssen nicht zusammenhängen. Es sind Wünsche, keine Genehmigungen.');
@@ -196,9 +207,12 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
         kaestchen.type = 'checkbox';
         kaestchen.value = String(k.kw);
         kaestchen.addEventListener('change', () => {
-          const auswahl = new Set(werte[f.id] || []);
+          const auswahl = new Set(wochenVon());
           if (kaestchen.checked) auswahl.add(k.kw); else auswahl.delete(k.kw);
-          geaendert(f, [...auswahl].sort((a, b) => a - b));
+          const wochen = [...auswahl].sort((a, b) => a - b);
+          const b = tageBereinigen(ctx, wochen, tageVon(), grenzen);
+          hinweis.textContent = hinweisEntfernt(b.grund, maxWochen);
+          geaendert(f, [...wochen, ...b.tage]);
           aktualisiere();
         });
         zeile.append(kaestchen, el('span', 'kw', `KW ${k.kw}`), el('span', 'datum', `${k.von}–${k.bis}`));
@@ -210,7 +224,13 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       monate.append(block);
     }
 
-    const teile = [erklaerung, zaehler, monate];
+    const tageBox = el('section', 'box einzeltage');
+    const tageText = el('p', null);
+    const tageMonate = el('div', 'monate');
+    tageBox.append(el('h3', null, 'Einzelne Tage'), tageText, tageMonate);
+    tageBox.hidden = true;
+
+    const teile = [erklaerung, zaehler, hinweis, monate, tageBox];
     const bereiche = gesperrteZeitraeume(kalender);
     if (bereiche.length) {
       const box = el('section', 'box box-gesperrt');
@@ -222,9 +242,54 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
       teile.push(box);
     }
 
+    // Tage je Monat, eingeklappt; offen, wenn darin ein Tag gewählt ist.
+    function zeichneTage(wochen, tage, rest) {
+      const gruppen = new Map();
+      for (const t of waehlbareTage(ctx, wochen)) {
+        const monat = Number(t.datum.slice(5, 7));
+        if (!gruppen.has(monat)) gruppen.set(monat, []);
+        gruppen.get(monat).push(t);
+      }
+      // Offene Monate und Fokus merken: Die Liste wird neu gebaut, soll aber nicht springen.
+      const offen = new Set([...tageMonate.querySelectorAll('details[open]')].map((d) => d.dataset.monat));
+      const erstes = tageMonate.children.length === 0;
+      const fokus = tageMonate.contains(document.activeElement) ? document.activeElement.value : null;
+      tageMonate.replaceChildren(...[...gruppen].map(([monat, liste]) => {
+        const auf = document.createElement('details');
+        auf.className = 'monat';
+        auf.dataset.monat = String(monat);
+        // Beim ersten Zeichnen öffnen Monate mit gewähltem Tag; danach gilt nur, was der Nutzer offen gelassen hat.
+        auf.open = offen.has(String(monat)) || (erstes && liste.some((t) => tage.includes(t.datum)));
+        auf.append(el('summary', null, MONATE[monat - 1]));
+        for (const t of liste) {
+          const zeile = el('label', 'woche');
+          const kaestchen = document.createElement('input');
+          kaestchen.type = 'checkbox';
+          kaestchen.value = t.datum;
+          kaestchen.checked = tage.includes(t.datum);
+          const block = kaestchen.checked ? null : tagSperrgrund(ctx, t.datum, wochen, tage, maxAmStueck);
+          kaestchen.disabled = nurLesen || (!kaestchen.checked && (rest <= 0 || Boolean(block)));
+          kaestchen.addEventListener('change', () => {
+            const neu = kaestchen.checked ? [...tageVon(), t.datum] : tageVon().filter((d) => d !== t.datum);
+            hinweis.textContent = '';
+            geaendert(f, [...wochenVon(), ...neu.sort()]);
+            aktualisiere();
+          });
+          zeile.append(kaestchen, el('span', 'kw', tagKurz(t.datum)), el('span', 'datum', `KW ${t.kw}`));
+          if (block) zeile.append(el('span', 'sperrgrund', sperrText(block, maxAmStueck)));
+          zeile.classList.toggle('gewaehlt', kaestchen.checked);
+          auf.append(zeile);
+        }
+        return auf;
+      }));
+      if (fokus) tageMonate.querySelector(`input[value="${fokus}"]`)?.focus();
+    }
+
     function aktualisiere() {
-      const auswahl = new Set(werte[f.id] || []);
-      const z = zusammenfassung(kalender, auswahl, maxWochen, maxTage);
+      const wochen = wochenVon();
+      const tage = tageVon();
+      const auswahl = new Set(wochen);
+      const z = zusammenfassung(kalender, auswahl, maxWochen, maxTage, tage.length);
       zaehler.textContent = z.text;
       for (const kaestchen of monate.querySelectorAll('input')) {
         const kw = Number(kaestchen.value);
@@ -234,6 +299,14 @@ export function baueFormular(container, daten, { nurLesen = false, beiAenderung 
         zeile.title = kaestchen.disabled && !nurLesen && !z.limitErreicht
           ? `Höchstens ${maxAmStueck} ${maxAmStueck === 1 ? 'Woche' : 'Wochen'} am Stück` : '';
         zeile.classList.toggle('gewaehlt', kaestchen.checked);
+      }
+      const rest = grenzen.einzeltage ? maxTage - z.tage : 0;
+      tageBox.hidden = !grenzen.einzeltage || wochen.length !== maxWochen || (rest <= 0 && !tage.length);
+      if (!tageBox.hidden) {
+        tageText.textContent = rest > 0
+          ? `Du hast noch ${rest} ${rest === 1 ? 'Urlaubstag' : 'Urlaubstage'} übrig. Du kannst sie als einzelne Tage wählen.`
+          : 'Alle Urlaubstage sind verplant.';
+        zeichneTage(wochen, tage, rest);
       }
     }
     aktualisiere();

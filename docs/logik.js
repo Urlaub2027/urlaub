@@ -14,6 +14,10 @@ const FEHLERTEXTE = {
   DOPPELTE_WOCHE: 'Eine Woche wurde doppelt gewählt.',
   ZU_VIELE_WOCHEN: 'Du hast zu viele Wochen gewählt.',
   ZU_VIELE_TAGE: 'Die gewählten Wochen brauchen mehr Urlaubstage, als du hast.',
+  UNGUELTIGER_TAG: 'Mindestens ein gewählter Tag ist nicht wählbar.',
+  DOPPELTER_TAG: 'Ein Tag wurde doppelt gewählt.',
+  TAGE_ERST_NACH_WOCHEN: 'Einzelne Tage gehen erst, wenn du alle Wochen gewählt hast.',
+  TAG_ZU_VIELE_AM_STUECK: 'Ein gewählter Tag macht deinen Urlaub zu lang am Stück.',
 };
 
 // Der Code steht hinter dem # im Link. Er wird so nie an GitHub übertragen.
@@ -26,16 +30,17 @@ export function fehlertext(code) {
   return FEHLERTEXTE[code] || 'Das hat nicht geklappt. Bitte versuch es später noch einmal.';
 }
 
-// maxWochen / urlaubstage = null: Regel ausgeschaltet, keine Grenze.
-export function zusammenfassung(kalender, auswahl, maxWochen, urlaubstage) {
+// maxWochen / urlaubstage = null: Regel ausgeschaltet, keine Grenze. anzahlTage: einzelne Tage.
+export function zusammenfassung(kalender, auswahl, maxWochen, urlaubstage, anzahlTage = 0) {
   const gewaehlt = kalender.filter((k) => auswahl.has(k.kw));
   const anzahl = gewaehlt.length;
-  const tage = gewaehlt.reduce((summe, k) => summe + k.arbeitstage, 0);
+  const tage = gewaehlt.reduce((summe, k) => summe + k.arbeitstage, 0) + anzahlTage;
   const mitMax = maxWochen !== null && maxWochen !== undefined;
   const mitTagen = urlaubstage !== null && urlaubstage !== undefined;
   const wochen = mitMax
     ? `${anzahl} von ${maxWochen} Wochen gewählt`
     : `${anzahl} ${anzahl === 1 ? 'Woche' : 'Wochen'} gewählt`;
+  const einzeln = anzahlTage > 0 ? ` · ${anzahlTage} ${anzahlTage === 1 ? 'einzelner Tag' : 'einzelne Tage'}` : '';
   const urlaub = mitTagen
     ? `${tage} von ${urlaubstage} Urlaubstagen`
     : `${tage} ${tage === 1 ? 'Urlaubstag' : 'Urlaubstage'}`;
@@ -43,7 +48,7 @@ export function zusammenfassung(kalender, auswahl, maxWochen, urlaubstage) {
     anzahl,
     tage,
     limitErreicht: mitMax && anzahl >= maxWochen,
-    text: `${wochen} · ${urlaub}`,
+    text: `${wochen}${einzeln} · ${urlaub}`,
   };
 }
 
@@ -105,4 +110,122 @@ const DATUM = new Intl.DateTimeFormat('de-DE', {
 
 export function zeitpunkt(iso) {
   return `${DATUM.format(new Date(iso))} Uhr`;
+}
+
+// ---------------------------------------------------------------- Einzelne Tage
+// Antwort der Urlaubswochen-Frage: Zahlen = KWs, Texte "YYYY-MM-DD" = einzelne Tage.
+// Fachregel-Duplikat: waehlbareTage und tagSperrgrund spiegeln urlaub.waehlbare_tage und
+// urlaub.tag_verlaengert_block in supabase/schema.sql. Änderungen dort nachziehen.
+
+const DATUMSTEXT = /^\d{4}-\d{2}-\d{2}$/;
+const WOCHENTAGE = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+const MS_TAG = 86400000;
+
+export const wochenAus = (wert) => (Array.isArray(wert) ? wert.filter((x) => typeof x === 'number') : []);
+export const tageAus = (wert) => (Array.isArray(wert)
+  ? wert.filter((x) => typeof x === 'string' && DATUMSTEXT.test(x)) : []);
+// einzeltage hat immer den Wert null – deshalb hasOwnProperty statt Wertprüfung.
+export const einzeltageAn = (regeln) => Object.prototype.hasOwnProperty.call(regeln || {}, 'einzeltage');
+
+const zeitVon = (iso) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+export const plusTage = (iso, n) => new Date(zeitVon(iso) + n * MS_TAG).toISOString().slice(0, 10);
+export const wochentag = (iso) => ((new Date(zeitVon(iso)).getUTCDay() + 6) % 7) + 1;
+export const tagKurz = (iso) => `${WOCHENTAGE[wochentag(iso) - 1]} ${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
+export const tagLang = (iso) => `${tagKurz(iso)}${iso.slice(0, 4)}`;
+
+export function kwVon(kalender, iso) {
+  const k = (kalender || []).find((x) => x.montag && x.montag <= iso && iso <= plusTage(x.montag, 6));
+  return k ? k.kw : null;
+}
+
+export function tageKontext(uw) {
+  return {
+    kalender: uw?.kalender || [],
+    frei: new Set((uw?.freie_tage || []).map((t) => t.datum)),
+    arbeitstage: uw?.arbeitstage_pro_woche || 5,
+  };
+}
+
+export function waehlbareTage(ctx, wochen) {
+  const gewaehlt = new Set(wochen);
+  const tage = [];
+  for (const k of ctx.kalender) {
+    if (k.gesperrt || gewaehlt.has(k.kw) || !k.montag) continue;
+    for (let i = 0; i < ctx.arbeitstage; i += 1) {
+      const datum = plusTage(k.montag, i);
+      if (!ctx.frei.has(datum)) tage.push({ datum, kw: k.kw });
+    }
+  }
+  return tage.sort((a, b) => (a.datum < b.datum ? -1 : 1));
+}
+
+// Blöcke aufeinanderfolgender gewählter KWs mit mindestens `mindestens` Wochen.
+function volleBloecke(ctx, wochen, mindestens) {
+  const montag = new Map(ctx.kalender.map((k) => [k.kw, k.montag]));
+  const sortiert = [...new Set(wochen)].sort((a, b) => a - b);
+  const bloecke = [];
+  for (const kw of sortiert) {
+    const letzter = bloecke[bloecke.length - 1];
+    if (letzter && kw === letzter.bisKw + 1) letzter.bisKw = kw;
+    else bloecke.push({ vonKw: kw, bisKw: kw });
+  }
+  return bloecke
+    .filter((b) => b.bisKw - b.vonKw + 1 >= mindestens && montag.get(b.vonKw) && montag.get(b.bisKw))
+    .map((b) => ({ ...b, anfang: montag.get(b.vonKw), ende: plusTage(montag.get(b.bisKw), 6) }));
+}
+
+export function tagSperrgrund(ctx, tag, wochen, tage, maxAmStueck) {
+  if (!Number.isFinite(maxAmStueck)) return null;
+  const ueberbrueckt = (d) => wochentag(d) > ctx.arbeitstage || ctx.frei.has(d) || tage.includes(d);
+  for (const b of volleBloecke(ctx, wochen, maxAmStueck)) {
+    let d;
+    if (tag > b.ende) {
+      d = plusTage(b.ende, 1);
+      while (d < tag && ueberbrueckt(d)) d = plusTage(d, 1);
+    } else if (tag < b.anfang) {
+      d = plusTage(b.anfang, -1);
+      while (d > tag && ueberbrueckt(d)) d = plusTage(d, -1);
+    } else continue;
+    if (d === tag) return b;
+  }
+  return null;
+}
+
+export function sperrText(block, maxAmStueck) {
+  const kws = block.vonKw === block.bisKw ? `KW ${block.vonKw}` : `KW ${block.vonKw}–${block.bisKw}`;
+  return `Nicht wählbar: würde deinen Urlaub ${kws} auf mehr als ${maxAmStueck} `
+    + `${maxAmStueck === 1 ? 'Woche' : 'Wochen'} am Stück verlängern.`;
+}
+
+// Gewählte Tage, die zur Wochenauswahl nicht mehr passen, entfernen.
+// grund: null (nichts entfernt), 'aus' (Regel aus), 'wochen' (nicht mehr alle Wochen), 'regel' (einzelne Tage).
+export function tageBereinigen(ctx, wochen, tage, { einzeltage, maxWochen, maxTage, maxAmStueck }) {
+  if (!tage.length) return { tage: [], grund: null };
+  if (!einzeltage) return { tage: [], grund: 'aus' };
+  if (wochen.length !== maxWochen) return { tage: [], grund: 'wochen' };
+  const erlaubt = new Set(waehlbareTage(ctx, wochen).map((t) => t.datum));
+  let rest = [...new Set(tage)].filter((d) => erlaubt.has(d)).sort();
+  // Erst die Tage direkt am Block entfernen (ohne Brücke über andere Tage), dann neu prüfen:
+  // ein entfernter Tag ist danach ein Arbeitstag und trennt die übrigen vom Block.
+  for (;;) {
+    const verlaengert = rest.filter((d) => tagSperrgrund(ctx, d, wochen, rest, maxAmStueck));
+    if (!verlaengert.length) break;
+    const direkt = rest.filter((d) => tagSperrgrund(ctx, d, wochen, [], maxAmStueck));
+    rest = rest.filter((d) => !direkt.includes(d));
+  }
+  const kalenderTage = ctx.kalender.filter((k) => wochen.includes(k.kw)).reduce((s, k) => s + k.arbeitstage, 0);
+  while (rest.length && kalenderTage + rest.length > maxTage) rest = rest.slice(0, -1);
+  return { tage: rest, grund: rest.length === tage.length ? null : 'regel' };
+}
+
+export function hinweisEntfernt(grund, maxWochen) {
+  if (grund === 'wochen') {
+    return `Deine einzelnen Tage wurden entfernt, weil du nicht mehr alle ${maxWochen} Wochen gewählt hast.`;
+  }
+  if (grund === 'aus') return 'Einzelne Tage sind in dieser Umfrage nicht mehr möglich und wurden entfernt.';
+  if (grund === 'regel') {
+    return 'Einzelne Tage wurden entfernt, weil sie nicht mehr wählbar sind (in einer gewählten Woche, '
+      + 'zu lang am Stück oder keine Urlaubstage mehr übrig).';
+  }
+  return '';
 }

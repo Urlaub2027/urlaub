@@ -21,7 +21,7 @@ const daten = {
   ],
   mitarbeiter: [
     { id: 1, name: 'Anna', link: 'x', geaendert_am: '2026-10-01T14:00:00Z',
-      antworten: { 1: [1, 30], 2: 21, 3: [31, 32], 4: true, 5: 3, 6: 2.5, 7: 'Hallo', 8: '2027-03-01' },
+      antworten: { 1: [1, 30, '2027-08-17'], 2: 21, 3: [31, 32], 4: true, 5: 3, 6: 2.5, 7: 'Hallo', 8: '2027-03-01' },
       verstoesse: { 3: 'ZU_VIELE_ANTWORTEN' } },
     { id: 2, name: 'Ben', link: 'y', geaendert_am: '2026-10-02T14:00:00Z',
       antworten: { 1: [30], 2: 22, 3: [31], 4: false, 5: 1, 6: 4.5 }, verstoesse: {} },
@@ -49,7 +49,17 @@ test('Zahl, Liste, Wochen, Hinweis', () => {
   assert.equal(w.beantwortet, 2);
   assert.equal(w.wochen.length, 47);
   assert.deepEqual([w.wochen[29].kw, w.wochen[29].anzahl, w.wochen[29].namen], [30, 2, 'Anna, Ben']);
+  // Tage stören die Wochen nicht und erscheinen in einer eigenen Liste.
+  assert.deepEqual([w.wochen[29].kw, w.wochen[29].anzahl], [30, 2]);
+  assert.deepEqual(w.tage, [{ datum: '2027-08-17', text: 'Di 17.08.2027', kw: null, anzahl: 1, namen: 'Anna' }]);
   assert.equal(zusammenfassung(daten.fragen[8], daten), null);
+});
+
+test('Einzelne Tage: KW aus dem Kalender', () => {
+  const mitMontag = { ...daten, kalender: [{ kw: 33, montag: '2027-08-16', von: '16.08.', bis: '22.08.', monat: 8,
+    arbeitstage: 6, feiertag: null, gesperrt: false }] };
+  assert.equal(zusammenfassung(daten.fragen[0], mitMontag).tage[0].kw, 33);
+  assert.equal(zusammenfassung(daten.fragen[0], { ...daten, mitarbeiter: [] }).tage.length, 0);
 });
 
 test('Personenzeilen mit Hinweisen', () => {
