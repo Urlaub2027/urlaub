@@ -295,6 +295,17 @@ button.frage-leeren {
   margin-top: 6px !important;
   font-weight: 400;
 }
+.tage-gewaehlt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 12px; }
+button.tag-kaertchen {
+  width: auto;
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 0.9rem;
+  background: var(--gewaehlt);
+  color: var(--text);
+  border: 1px solid var(--akzent);
+  border-radius: 999px;
+}
 /* Tabs bei Umfragen mit Urlaubswochen: Urlaubswochen, Einzelne Tage, Zusatzfragen. */
 .tab-leiste { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; scroll-margin-top: 8px; }
 button.tab {

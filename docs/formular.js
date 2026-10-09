@@ -5,7 +5,7 @@ import {
 } from './formular-logik.js';
 import {
   zusammenfassung, istGesperrt, nachMonat, gesperrteZeitraeume, gesperrteGewaehlte, MONATE,
-  wochenAus, tageAus, einzeltageAn, tagKurz, tageKontext, waehlbareTage, tagSperrgrund, sperrText,
+  wochenAus, tageAus, einzeltageAn, tagKurz, tagLang, tageKontext, waehlbareTage, tagSperrgrund, sperrText,
   tageBereinigen, hinweisEntfernt,
 } from './logik.js';
 
@@ -243,8 +243,9 @@ export function baueFormular(container, daten,
     // Inhalt des Tabs „Einzelne Tage“ (der Tab-Titel ersetzt eine eigene Überschrift).
     const tageBox = el('section', 'einzeltage');
     const tageText = el('p', null);
+    const tageGewaehlt = el('div', 'tage-gewaehlt');
     const tageMonate = el('div', 'monate');
-    tageBox.append(tageText, tageMonate);
+    tageBox.append(tageText, tageGewaehlt, tageMonate);
     tageBox.hidden = true;
     sprungKnopf.addEventListener('click', () => zeigeTab('tage', true));
 
@@ -268,6 +269,24 @@ export function baueFormular(container, daten,
         if (!gruppen.has(monat)) gruppen.set(monat, []);
         gruppen.get(monat).push(t);
       }
+      // Gewählte Tage oben als Kärtchen: sichtbar und entfernbar, ohne den Monat aufzuklappen.
+      const fokusKaertchen = tageGewaehlt.contains(document.activeElement)
+        ? [...tageGewaehlt.querySelectorAll('button')].indexOf(document.activeElement) : -1;
+      const kaertchen = [...tage].sort().map((d) => {
+        const k = el('button', 'tag-kaertchen', `${tagLang(d)} ✕`);
+        k.type = 'button';
+        k.setAttribute('aria-label', `${tagLang(d)} entfernen`);
+        k.disabled = nurLesen;
+        k.addEventListener('click', () => {
+          hinweis.textContent = '';
+          geaendert(f, [...wochenVon(), ...tageVon().filter((x) => x !== d)]);
+          aktualisiere();
+        });
+        return k;
+      });
+      tageGewaehlt.replaceChildren(...(kaertchen.length ? [el('span', null, 'Deine einzelnen Tage:'), ...kaertchen] : []));
+      tageGewaehlt.hidden = !kaertchen.length;
+      if (fokusKaertchen >= 0) (kaertchen[fokusKaertchen] ?? kaertchen[kaertchen.length - 1])?.focus();
       // Offene Monate und Fokus merken: Die Liste wird neu gebaut, soll aber nicht springen.
       const offen = new Set([...tageMonate.querySelectorAll('details[open]')].map((d) => d.dataset.monat));
       const fokus = tageMonate.contains(document.activeElement) ? document.activeElement.value : null;
@@ -277,7 +296,9 @@ export function baueFormular(container, daten,
         auf.dataset.monat = String(monat);
         // Alles startet zugeklappt; offen ist nur, was der Nutzer (oder der Sprungknopf) geöffnet hat.
         auf.open = offen.has(String(monat));
-        auf.append(el('summary', null, MONATE[monat - 1]));
+        // Monate bleiben zugeklappt; der Vermerk zeigt, wo gewählte Tage liegen.
+        const anzahl = liste.filter((t) => tage.includes(t.datum)).length;
+        auf.append(el('summary', null, anzahl ? `${MONATE[monat - 1]} · ${anzahl} gewählt` : MONATE[monat - 1]));
         for (const t of liste) {
           const zeile = el('label', 'woche');
           const kaestchen = document.createElement('input');
