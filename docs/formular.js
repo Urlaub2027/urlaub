@@ -394,7 +394,8 @@ export function baueFormular(container, daten,
     leiste.setAttribute('role', 'tablist');
     const knoepfe = {};
     let aktuell = 'wochen';
-    let tageGesperrt = true;
+    // Stand beim Laden: Aufleuchten nur beim Wechsel gesperrt → frei, nicht bei jedem Neuladen.
+    let tageGesperrt = stand().find((t) => t.id === 'tage')?.gesperrt ?? true;
     for (const [id, bereich] of Object.entries(tabBereiche)) {
       bereich.id = `tab-bereich-${id}`;
       bereich.setAttribute('role', 'tabpanel');
