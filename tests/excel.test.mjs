@@ -103,3 +103,14 @@ test('bereinige: nur ungültige Zeichen entfallen, gültige Paare bleiben', () =
   assert.equal(bereinige('a￾b￿c'), 'abc');
   assert.equal(bereinige('\t\n\r�\u0001\u000B'), '\t\n\r�');
 });
+
+// Die iPhone-/Mac-Vorschau (Quick Look) zeigt Inline-Texte (t="inlineStr") nicht an: Die Datei
+// öffnet sich, die Blätter bleiben leer. Excel selbst schreibt Texte in xl/sharedStrings.xml.
+test('Excel-Datei: Texte stehen in sharedStrings, nicht inline', () => {
+  const roh = new TextDecoder().decode(erzeugeXlsx(excelBlaetter(daten)));
+  assert.ok(!roh.includes('inlineStr'), 'keine Inline-Texte');
+  assert.match(roh, /PartName="\/xl\/sharedStrings\.xml"/, 'Content-Type für sharedStrings');
+  assert.match(roh, /relationships\/sharedStrings" Target="sharedStrings\.xml"/, 'Beziehung zur Arbeitsmappe');
+  assert.match(roh, /<sst [^>]*count="\d+" uniqueCount="\d+">/);
+  assert.match(roh, /<c r="A1" t="s" s="1"><v>\d+<\/v><\/c>/, 'Kopfzelle verweist auf sharedStrings');
+});
