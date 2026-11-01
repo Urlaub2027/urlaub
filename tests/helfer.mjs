@@ -81,3 +81,16 @@ export async function registriere(db, benutzername, einladung, anzeigename = ben
     await db.exec('reset role');
   }
 }
+
+// Wie `registriere`, aber mit frei wählbaren Metadaten (z. B. PEP-Einladung statt Urlaubstool-Einladung).
+export async function registriereMit(db, benutzername, daten) {
+  await db.exec('set role supabase_auth_admin');
+  try {
+    const r = await db.query(
+      'insert into auth.users (email, raw_user_meta_data) values ($1, $2) returning id',
+      [`${benutzername}@example.com`, JSON.stringify(daten)]);
+    return r.rows[0].id;
+  } finally {
+    await db.exec('reset role');
+  }
+}
