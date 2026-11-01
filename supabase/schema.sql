@@ -2635,7 +2635,8 @@ as $$
 $$;
 
 -- Läuft bei jedem neuen Konto (auch /auth/v1/signup). Ohne gültige Einladung
--- schlägt das Anlegen des Kontos fehl.
+-- schlägt das Anlegen des Kontos fehl. Ausnahme: Mitarbeiter-Einladungen der PEP
+-- (Metadaten-Schlüssel pep_einladung, nur wenn das PEP-Schema in dieser Datenbank liegt).
 create or replace function urlaub.neuer_benutzer()
 returns trigger
 language plpgsql
@@ -2647,6 +2648,12 @@ declare
   v_name text := btrim(coalesce(new.raw_user_meta_data ->> 'anzeigename', ''));
   v_e    urlaub.einladungen;
 begin
+  -- Fachregel-Duplikat: Gegenstück in Urlaub2027/pep supabase/schema.sql (pep.neuer_mitarbeiter),
+  -- dort prüft die PEP den Code.
+  if new.raw_user_meta_data ? 'pep_einladung'
+     and to_regclass('pep.mitarbeiter_einladungen') is not null then
+    return new;
+  end if;
   if v_code is null then
     raise exception 'EINLADUNG_FEHLT';
   end if;

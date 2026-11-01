@@ -1,6 +1,6 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { neueDatenbank, als, browser, registriere } from './helfer.mjs';
+import { neueDatenbank, als, browser, registriere, registriereMit } from './helfer.mjs';
 
 let db;
 let chef;
@@ -112,4 +112,18 @@ test('Rechte: wer darf was aufrufen', async () => {
   }
   await assert.rejects(browser(db, 'select urlaub.start_einladung()'), /permission denied/);
   await assert.rejects(als(db, 'authenticated', chef, 'select urlaub.start_einladung()'), /permission denied/);
+});
+
+test('PEP-Einladung: ohne PEP-Schema bleibt die Einladungspflicht', async () => {
+  const vorher = await anzahlKonten();
+  await assert.rejects(registriereMit(db, 'pep1', { pep_einladung: 'x'.repeat(32) }), /EINLADUNG_FEHLT/);
+  assert.equal(await anzahlKonten(), vorher);
+});
+
+test('PEP-Einladung: mit PEP-Schema legt der Urlaubstool-Trigger keinen Organisator an', async () => {
+  const pepDb = await neueDatenbank();
+  await pepDb.exec('create schema pep; create table pep.mitarbeiter_einladungen (code text);');
+  const id = await registriereMit(pepDb, 'pep2', { pep_einladung: 'x'.repeat(32) });
+  const n = (await pepDb.query('select count(*)::int as n from urlaub.organisatoren where user_id = $1', [id])).rows[0].n;
+  assert.equal(n, 0);
 });
